@@ -57,9 +57,9 @@ jobs:
     with:
       version: ${{ needs.version.outputs.tag }}
 
-  frontend:
-    needs: version
-    if: needs.version.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
-    uses: ./.github/workflows/frontend-build.yaml
-    with:
-      version: ${{ needs.version.outputs.tag }}
+#   frontend:
+#     needs: version
+#     if: needs.version.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
+#     uses: ./.github/workflows/frontend-build.yaml
+#     with:
+#       version: ${{ needs.version.outputs.tag }}
