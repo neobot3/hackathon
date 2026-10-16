@@ -1,0 +1,9 @@
+{
+  "name": "techrep-scheduler-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Frontend for the MRO Tech Rep scheduling application",
+  "type": "module",
+  "scripts": {},
+  "license": "UNLICENSED"
+}
