@@ -17,10 +17,11 @@ The statement names these factors. The table shows how each one maps to the curr
 | MRO location | `mro_locations` table |
 | Aircraft type | `aircraft_types` table |
 | Tech Rep qualifications | `tech_rep_certifications` table, and the solver's certification check |
-| Availability | Not modeled yet |
+| Availability | `rep_unavailability` table (`/unavailability` API) |
 | Location (rep) | `tech_reps.home_base` |
-| Overtime considerations | Not modeled yet |
-| CBA work/rest rules | Not modeled yet |
+| Overtime considerations | `cba_rules` overtime rates and cap, `tech_reps.banked_ot_hours`, `assignments.overtime_type` |
+| CBA work/rest rules | `cba_rules`, `shift_patterns`, and `shift_start_windows` tables (`/cba` API) |
+| MRO demand | `mro_demands` table (`/demands` API) |
 
 ## Our approach
 

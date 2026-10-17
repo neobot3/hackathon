@@ -22,10 +22,17 @@ backend/
 ├── models.py           SQLAlchemy models that mirror db/init.sql
 ├── schemas.py          Pydantic request and response models
 ├── routers/
-│   ├── reps.py         /reps endpoints for managing Tech Reps
+│   ├── reps.py         /reps endpoints for managing Tech Reps and certifications
+│   ├── aircraft_types.py  /aircraft-types endpoints
+│   ├── mro_locations.py   /mro-locations endpoints, including travel times
+│   ├── cba.py          /cba endpoints for CBA rules, shift patterns, holidays, and pay periods
+│   ├── unavailability.py  /unavailability endpoints for rep time off
+│   ├── demands.py      /demands endpoints for MRO demand and solicitation responses
+│   ├── assignments.py  /assignments endpoints for reviewing and overriding the schedule
 │   └── schedules.py    /schedule endpoints for scheduling requests
 ├── services/
-│   └── solver.py       Google OR-Tools CP-SAT optimization logic
+│   ├── scheduler.py    Database-driven CP-SAT model with CBA rules
+│   └── solver.py       Placeholder CP-SAT model for /schedule/solve
 ├── requirements.txt
 └── Dockerfile
 ```
@@ -121,7 +128,15 @@ The image does not include `.env`, so `--env-file` passes the settings in at run
 - Interactive API docs: <http://localhost:8000/docs>
 - Tech Reps (needs the database): <http://localhost:8000/reps>
 
-To call the solver endpoint:
+To schedule open demands stored in the database for a time window (add `"save": true` to store the proposals):
+
+```sh
+curl -X POST http://localhost:8000/schedule/run \
+  -H 'Content-Type: application/json' \
+  -d '{"start_time": "2026-11-01T00:00:00-06:00", "end_time": "2026-11-15T00:00:00-07:00"}'
+```
+
+To call the placeholder solver endpoint with inline data:
 
 ```sh
 curl -X POST http://localhost:8000/schedule/solve \

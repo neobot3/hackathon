@@ -31,27 +31,50 @@ hackathon/
 
 ## Backend endpoints
 
+For inputs, outputs, and examples, see [api_route_reference.md](api_route_reference.md).
+
 | Method | Path | Description |
 | --- | --- | --- |
 | GET | `/health` | Liveness check |
 | GET | `/reps` | List Tech Reps with their certified aircraft type IDs |
 | GET | `/reps/{rep_id}` | Get one Tech Rep |
 | POST | `/reps` | Create a Tech Rep and their certifications |
-| POST | `/schedule/solve` | Placeholder CP-SAT model that matches requests to certified reps |
+| PATCH | `/reps/{rep_id}` | Update rep fields (only fields sent change) |
+| GET | `/reps/{rep_id}/certifications` | List a rep's certifications |
+| PUT, DELETE | `/reps/{rep_id}/certifications/{aircraft_type_id}` | Add or update, or remove, a certification with its dates |
+| GET, POST | `/aircraft-types`, GET `/aircraft-types/{id}` | Aircraft types |
+| GET, POST | `/mro-locations`, GET `/mro-locations/{id}` | MRO facilities. `timezone` must be an IANA name |
+| GET | `/mro-locations/{id}/travel-times` | One-way travel times to this MRO |
+| PUT, DELETE | `/mro-locations/{id}/travel-times/{home_base}` | Set or remove travel from a home base |
+| GET | `/cba/rules`, `/cba/rules/active` | CBA limits (all, or the set in effect on `?on=`) |
+| GET | `/cba/shift-patterns` | Shift patterns with their start-time windows |
+| GET, POST | `/cba/holidays` | Statutory holidays |
+| GET, POST | `/cba/pay-periods`, DELETE `/cba/pay-periods/{id}` | Pay periods for the overtime tier |
+| GET, POST | `/unavailability` | Rep vacation, sick, training, and leave. `PATCH /unavailability/{id}` changes status |
+| GET, POST | `/demands` | MRO demand. `PATCH /demands/{id}` changes status |
+| GET | `/demands/{id}/responses` | Solicitation replies for a demand |
+| PUT, DELETE | `/demands/{id}/responses/{rep_id}` | Record or remove a rep's accept or decline |
+| GET, POST | `/assignments`, GET `/assignments/{id}` | List with filters, or create a manual override (CBA rules not checked) |
+| PATCH | `/assignments/{id}` | Change status: proposed to confirmed to in_progress to completed; any live status to cancelled |
+| POST | `/schedule/run` | Solve open demands in a time window from database data. `save: true` stores proposals |
+| POST | `/schedule/solve` | Placeholder CP-SAT model that takes its input in the request body |
 | GET | `/docs` | Auto-generated OpenAPI UI |
 
 ## Solver flow
 
-1. Load reps, certifications, MRO locations, and open requests from PostgreSQL.
-2. Build a CP-SAT model:
-   - Decision variables: `x[rep, request]` booleans, plus interval variables for time windows.
-   - Hard constraints: certification match, no overlapping assignments per rep (`AddNoOverlap`), availability windows.
-   - Objective: maximize coverage, then minimize travel and imbalance between reps.
-3. Solve with a time limit.
-4. Write results to `assignments` with `status = 'proposed'`.
-5. A planner confirms the proposal in the UI, which moves the status to `confirmed`.
+`POST /schedule/run` ([services/scheduler.py](../backend/services/scheduler.py)):
 
-Steps 1, 4, and 5 are not implemented yet. The current endpoint takes its input in the request body.
+1. Load the CBA rules in effect, open demands in the window, active reps with certifications and shift patterns, approved unavailability, existing assignments (back to the start of each averaging and pay period), solicitation responses, travel times, pay periods, and holidays.
+2. Build a CP-SAT model with `x[rep, demand]` booleans for eligible pairs only:
+   - Eligibility: a valid certification, no approved unavailability, no clash with existing assignments including travel and minimum rest, and on-site hours plus travel within the 16 h duty day (21-1.03).
+   - Hard constraints: `reps_needed` per demand, no overlap and minimum rest between new assignments, max consecutive worked days, a run of 3 days off in every 28 for 5-5-4 reps (19-1.07), and regular hours within the 40 h weekly average over 26 or 52 weeks (19-1.01 to 19-1.03) for reps without a shift pattern.
+   - Mandatory work: once a demand has `demand_responses`, reps who did not accept are assigned only when `allow_mandatory` is true, in reverse Union Seniority (16-1.06, 21-2.09, 21-3.08), at 2x.
+   - Objective, in strict order: fill higher-priority demands, prefer volunteers, follow reverse seniority, then minimize premium pay. Premium covers overtime (1.5x for the first 8 h per pay period, then 1.75x, per 16-1.04), field service at 1.5x including travel (21-2.02), AOG with 2 h buffers each side (21-3.02), and statutory holidays, with no duplication (16-1.05).
+3. Solve with a time limit.
+4. With `save: true`, write results to `assignments` with `status = 'proposed'`, plus overtime type, overtime hours, and travel hours. Unfilled demands come back with a reason, and data gaps (such as a missing travel time) come back as warnings.
+5. A planner confirms the proposal in the UI, which moves the status to `confirmed` (not implemented yet).
+
+Not modeled yet: Base Coverage and AOG list membership and rotation (21-2.03 to 21-2.07, 21-3.04 to 21-3.07), the 48 h minimum per set of days off (19-1.07), and banked overtime (15-4).
 
 ## Running locally
 
