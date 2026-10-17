@@ -23,6 +23,9 @@ class Settings(BaseSettings):
 
     solver_max_seconds: float = 10.0
 
+    # Browser origins allowed to call the API (JSON list in the env var).
+    cors_origins: list[str] = ["http://localhost:5173"]
+
     @property
     def sqlalchemy_url(self) -> URL | str:
         if self.database_url:

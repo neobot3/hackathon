@@ -4,7 +4,9 @@
 
 ```mermaid
 flowchart LR
-    UI[Frontend<br/>npm project] -->|REST/JSON| API[Backend<br/>FastAPI]
+    USER((Admin /<br/>Scheduler)) --> UI[Frontend<br/>Vue 3 SPA]
+    UI -.->|SSO, planned| ENTRA[Azure Entra ID]
+    UI -->|REST/JSON, CORS| API[Backend<br/>FastAPI]
     API -->|SQLAlchemy| DB[(PostgreSQL)]
     API -->|builds and solves model| SOLVER[Google OR-Tools<br/>CP-SAT]
 ```
@@ -13,21 +15,37 @@ flowchart LR
 
 | Layer | Technology | Role |
 | --- | --- | --- |
-| Frontend | npm project, framework not chosen yet | Scheduler UI: view reps, MRO demand, and proposed schedules |
+| Frontend | Vue 3, Vite, Vue Router, Pinia, GSAP | Admin UI for reference data and CBA rules; scheduler UI for demand, leave, solver runs, and assignments. See [frontend.md](frontend.md) |
+| Auth | Hardcoded demo users today; Azure Entra ID (stub) | Two roles: `admin` and `scheduler`. Admins can also use scheduler pages |
 | API | Python 3.12, FastAPI, Uvicorn | REST endpoints, request validation (Pydantic), solver orchestration |
 | Optimization | Google OR-Tools CP-SAT | Constraint programming solver that assigns reps to MRO requests |
 | Persistence | PostgreSQL 16, SQLAlchemy 2, psycopg2 | Reps, certifications, MRO locations, aircraft types, assignments |
-| Packaging | Docker | Container image for the backend |
+| Packaging | Docker | Backend image (Python 3.12 slim) and frontend image (Node 24 LTS build, unprivileged nginx on port 8080) |
+| Hosting (frontend) | nginx container or Azure Static Web Apps | SPA fallback and security headers in `nginx.conf` or `public/staticwebapp.config.json` |
 
 ## Repository layout
 
 ```text
 hackathon/
-├── frontend/   npm project (UI to be added)
+├── frontend/   Vue 3 + Vite SPA, Dockerfile, nginx.conf (see frontend.md)
 ├── backend/    FastAPI app: routers/, services/solver.py, models, schemas, Dockerfile
 ├── db/         init.sql schema and setup instructions
-└── docs/       architecture and problem statement
+├── docs/       architecture, frontend, API reference, problem statement
+└── Makefile    install, dev, lint, database, and Docker targets
 ```
+
+## Frontend
+
+The frontend is a single-page app. It has a public home page and login page, plus two role-gated areas:
+
+| Area | Role | Pages |
+| --- | --- | --- |
+| `/admin` | `admin` | Overview, tech reps and certifications, aircraft types, MRO locations and travel times, CBA rules, holidays and pay periods |
+| `/scheduler` | `scheduler` (or `admin`) | Overview, MRO demand, rep unavailability, run scheduler, assignments |
+
+The browser calls the API directly at `VITE_API_BASE_URL`, so that origin must be listed in the backend `CORS_ORIGINS` setting. `VITE_*` values are baked into the bundle at build time and must not hold secrets. For the full structure, see [frontend.md](frontend.md).
+
+> The API does not check tokens yet. Until Azure SSO is wired up on both sides, the role checks in the UI only hide pages; they do not protect data.
 
 ## Backend endpoints
 
@@ -42,11 +60,12 @@ For inputs, outputs, and examples, see [api_route_reference.md](api_route_refere
 | PATCH | `/reps/{rep_id}` | Update rep fields (only fields sent change) |
 | GET | `/reps/{rep_id}/certifications` | List a rep's certifications |
 | PUT, DELETE | `/reps/{rep_id}/certifications/{aircraft_type_id}` | Add or update, or remove, a certification with its dates |
-| GET, POST | `/aircraft-types`, GET `/aircraft-types/{id}` | Aircraft types |
-| GET, POST | `/mro-locations`, GET `/mro-locations/{id}` | MRO facilities. `timezone` must be an IANA name |
+| GET, POST | `/aircraft-types`, GET, PATCH `/aircraft-types/{id}` | Aircraft types |
+| GET, POST | `/mro-locations`, GET, PATCH `/mro-locations/{id}` | MRO facilities. `timezone` must be an IANA name |
 | GET | `/mro-locations/{id}/travel-times` | One-way travel times to this MRO |
 | PUT, DELETE | `/mro-locations/{id}/travel-times/{home_base}` | Set or remove travel from a home base |
 | GET | `/cba/rules`, `/cba/rules/active` | CBA limits (all, or the set in effect on `?on=`) |
+| PATCH | `/cba/rules/{id}` | Update a CBA rule set (only fields sent change) |
 | GET | `/cba/shift-patterns` | Shift patterns with their start-time windows |
 | GET, POST | `/cba/holidays` | Statutory holidays |
 | GET, POST | `/cba/pay-periods`, DELETE `/cba/pay-periods/{id}` | Pay periods for the overtime tier |
@@ -72,7 +91,7 @@ For inputs, outputs, and examples, see [api_route_reference.md](api_route_refere
    - Objective, in strict order: fill higher-priority demands, prefer volunteers, follow reverse seniority, then minimize premium pay. Premium covers overtime (1.5x for the first 8 h per pay period, then 1.75x, per 16-1.04), field service at 1.5x including travel (21-2.02), AOG with 2 h buffers each side (21-3.02), and statutory holidays, with no duplication (16-1.05).
 3. Solve with a time limit.
 4. With `save: true`, write results to `assignments` with `status = 'proposed'`, plus overtime type, overtime hours, and travel hours. Unfilled demands come back with a reason, and data gaps (such as a missing travel time) come back as warnings.
-5. A planner confirms the proposal in the UI, which moves the status to `confirmed` (not implemented yet).
+5. A scheduler reviews the proposals on the Assignments page and confirms them one at a time or all at once. This moves the status to `confirmed`. The same page also starts, completes, and cancels assignments.
 
 Not modeled yet: Base Coverage and AOG list membership and rotation (21-2.03 to 21-2.07, 21-3.04 to 21-3.07), the 48 h minimum per set of days off (19-1.07), and banked overtime (15-4).
 
@@ -95,4 +114,16 @@ uvicorn main:app --reload
 docker build -t techrep-backend backend
 docker run --rm -p 8000:8000 --env-file backend/.env \
   -e DB_HOST=host.docker.internal techrep-backend
+
+# Frontend (http://localhost:5173)
+cd frontend
+cp .env.example .env
+npm install
+npm run dev
+
+# Or build and run the frontend image (http://localhost:8080)
+make frontend-docker-build VITE_API_BASE_URL=http://localhost:8000
+docker run --rm -p 8080:8080 techrep-frontend
 ```
+
+`make dev` runs the backend and frontend together. When serving the UI from a different origin, such as port 8080, add that origin to `CORS_ORIGINS` in `backend/.env`.

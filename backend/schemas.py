@@ -30,6 +30,14 @@ AssignmentStatus = Literal["proposed", "confirmed", "in_progress", "completed", 
 OvertimeType = Literal["none", "voluntary", "mandatory"]
 
 
+def _check_timezone(value: str) -> str:
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ValueError(f"Unknown IANA timezone: {value}") from None
+    return value
+
+
 class _TimeWindow(BaseModel):
     start_time: AwareDatetime
     end_time: AwareDatetime
@@ -127,6 +135,45 @@ class CbaRulesRead(BaseModel):
     averaging_anchor_date: date | None
     consecutive_days_off_required: int
     aog_pay_buffer_hours: float
+
+
+# Bounds mirror the Numeric/SmallInteger column sizes in models.CbaRules.
+class CbaRulesUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    effective_from: date | None = None
+    effective_to: date | None = None
+    min_rest_hours: float | None = Field(default=None, ge=0, le=99.99)
+    min_rest_hours_trade: float | None = Field(default=None, ge=0, le=99.99)
+    max_consecutive_scheduled_days: int | None = Field(default=None, ge=1, le=365)
+    max_consecutive_worked_days: int | None = Field(default=None, ge=1, le=365)
+    min_hours_off_per_set: float | None = Field(default=None, ge=0, le=999.99)
+    three_days_off_window_days: int | None = Field(default=None, ge=1, le=365)
+    avg_weekly_hours: float | None = Field(default=None, ge=0, le=99.99)
+    averaging_weeks_major_base: int | None = Field(default=None, ge=1, le=52)
+    averaging_weeks_other_base: int | None = Field(default=None, ge=1, le=52)
+    max_field_duty_hours: float | None = Field(default=None, ge=0, le=99.99)
+    post_field_rest_hours: float | None = Field(default=None, ge=0, le=99.99)
+    base_coverage_notice_hours: int | None = Field(default=None, ge=0, le=32767)
+    max_vehicle_travel_km: int | None = Field(default=None, ge=0, le=32767)
+    field_service_rate: float | None = Field(default=None, ge=0, le=9.99)
+    ot_rate_voluntary: float | None = Field(default=None, ge=0, le=9.99)
+    ot_voluntary_tier_hours: float | None = Field(default=None, ge=0, le=99.99)
+    ot_rate_voluntary_over_tier: float | None = Field(default=None, ge=0, le=9.99)
+    ot_rate_mandatory: float | None = Field(default=None, ge=0, le=9.99)
+    max_banked_ot_hours: float | None = Field(default=None, ge=0, le=999.99)
+    stat_holiday_rate: float | None = Field(default=None, ge=0, le=9.99)
+    major_bases: list[str] | None = Field(default=None, max_length=50)
+    averaging_anchor_date: date | None = None
+    consecutive_days_off_required: int | None = Field(default=None, ge=0, le=14)
+    aog_pay_buffer_hours: float | None = Field(default=None, ge=0, le=99.99)
+
+    @model_validator(mode="after")
+    def _required_not_null(self) -> Self:
+        nullable = {"effective_to", "averaging_anchor_date"}
+        for name in self.model_fields_set - nullable:
+            if getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be null")
+        return self
 
 
 class StatutoryHolidayBase(BaseModel):
@@ -260,6 +307,17 @@ class AircraftTypeRead(AircraftTypeCreate):
     id: int
 
 
+class AircraftTypeUpdate(BaseModel):
+    model_name: str | None = Field(default=None, min_length=1, max_length=100)
+    manufacturer: str | None = Field(default=None, max_length=100)
+
+    @model_validator(mode="after")
+    def _required_not_null(self) -> Self:
+        if "model_name" in self.model_fields_set and self.model_name is None:
+            raise ValueError("model_name cannot be null")
+        return self
+
+
 class MroLocationCreate(BaseModel):
     facility_name: str = Field(min_length=1, max_length=200)
     location: str = Field(min_length=1, max_length=200)
@@ -269,17 +327,32 @@ class MroLocationCreate(BaseModel):
     @field_validator("timezone")
     @classmethod
     def _known_timezone(cls, value: str) -> str:
-        try:
-            ZoneInfo(value)
-        except (ZoneInfoNotFoundError, ValueError):
-            raise ValueError(f"Unknown IANA timezone: {value}") from None
-        return value
+        return _check_timezone(value)
 
 
 class MroLocationRead(MroLocationCreate):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+
+
+class MroLocationUpdate(BaseModel):
+    facility_name: str | None = Field(default=None, min_length=1, max_length=200)
+    location: str | None = Field(default=None, min_length=1, max_length=200)
+    airport_code: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
+    timezone: str | None = Field(default=None, max_length=64)
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_timezone(cls, value: str | None) -> str | None:
+        return value if value is None else _check_timezone(value)
+
+    @model_validator(mode="after")
+    def _required_not_null(self) -> Self:
+        for name in ("facility_name", "location", "timezone"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be null")
+        return self
 
 
 class TravelTimeUpsert(BaseModel):

@@ -1,5 +1,7 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+from config import settings
 from routers import (
     aircraft_types,
     assignments,
@@ -12,6 +14,13 @@ from routers import (
 )
 
 app = FastAPI(title="Tech Rep Scheduler API", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 app.include_router(reps.router)
 app.include_router(aircraft_types.router)

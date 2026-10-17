@@ -11,10 +11,13 @@ DB_CONTAINER := postgres-db
 DB_IMAGE     := postgres:18
 DB_PASSWORD  ?= my_suP3r_secure_p@ssw0rd
 API_IMAGE    := techrep-backend
+WEB_IMAGE    := techrep-frontend
+VITE_API_BASE_URL ?= http://localhost:8000
 
 .PHONY: help install backend-install frontend-install dev backend frontend \
 	    lint format backend-lint backend-format frontend-lint frontend-format \
-	    db-up db-down db-reset db-shell docker-build docker-run clean
+	    db-up db-down db-reset db-shell docker-build docker-run \
+            frontend-docker-build clean
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -95,6 +98,9 @@ db-shell: ## Open psql in the database container
 
 docker-build: ## Build the backend image
 	docker build -t $(API_IMAGE) $(BACKEND)
+
+frontend-docker-build: ## Build the frontend image (override VITE_API_BASE_URL=...)
+	docker build -t $(WEB_IMAGE) --build-arg VITE_API_BASE_URL=$(VITE_API_BASE_URL) $(FRONTEND)
 
 docker-run: $(BACKEND)/.env ## Run the backend image against the local database
 	docker run --rm -p 8000:8000 --env-file $(BACKEND)/.env \

@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 
 from database import DbSession
 from models import AircraftType
-from schemas import AircraftTypeCreate, AircraftTypeRead
+from schemas import AircraftTypeCreate, AircraftTypeRead, AircraftTypeUpdate
 
 router = APIRouter(prefix="/aircraft-types", tags=["aircraft types"])
 
@@ -26,6 +26,23 @@ def get_aircraft_type(type_id: int, db: DbSession) -> AircraftType:
 def create_aircraft_type(payload: AircraftTypeCreate, db: DbSession) -> AircraftType:
     aircraft_type = AircraftType(**payload.model_dump())
     db.add(aircraft_type)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="An aircraft type with that model name exists"
+        ) from None
+    return aircraft_type
+
+
+@router.patch("/{type_id}", response_model=AircraftTypeRead)
+def update_aircraft_type(
+    type_id: int, payload: AircraftTypeUpdate, db: DbSession
+) -> AircraftType:
+    aircraft_type = get_aircraft_type(type_id, db)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(aircraft_type, field, value)
     try:
         db.commit()
     except IntegrityError:

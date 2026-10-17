@@ -1,0 +1,44 @@
+# ---------- Build ----------
+FROM node:24-alpine AS build
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# Vite inlines VITE_* values into the bundle at build time; never pass secrets.
+ARG VITE_APP_NAME="TechRep Scheduler"
+ARG VITE_API_BASE_URL=http://localhost:8000
+ARG VITE_AUTH_MODE=local
+ARG VITE_AZURE_CLIENT_ID=
+ARG VITE_AZURE_TENANT_ID=
+ARG VITE_AZURE_AUTHORITY=
+ARG VITE_AZURE_REDIRECT_URI=
+ARG VITE_AZURE_POST_LOGOUT_REDIRECT_URI=
+ARG VITE_AZURE_API_SCOPE=
+ARG VITE_AZURE_ADMIN_ROLE=TechRep.Admin
+ARG VITE_AZURE_SCHEDULER_ROLE=TechRep.Scheduler
+ENV VITE_APP_NAME=$VITE_APP_NAME \
+    VITE_API_BASE_URL=$VITE_API_BASE_URL \
+    VITE_AUTH_MODE=$VITE_AUTH_MODE \
+    VITE_AZURE_CLIENT_ID=$VITE_AZURE_CLIENT_ID \
+    VITE_AZURE_TENANT_ID=$VITE_AZURE_TENANT_ID \
+    VITE_AZURE_AUTHORITY=$VITE_AZURE_AUTHORITY \
+    VITE_AZURE_REDIRECT_URI=$VITE_AZURE_REDIRECT_URI \
+    VITE_AZURE_POST_LOGOUT_REDIRECT_URI=$VITE_AZURE_POST_LOGOUT_REDIRECT_URI \
+    VITE_AZURE_API_SCOPE=$VITE_AZURE_API_SCOPE \
+    VITE_AZURE_ADMIN_ROLE=$VITE_AZURE_ADMIN_ROLE \
+    VITE_AZURE_SCHEDULER_ROLE=$VITE_AZURE_SCHEDULER_ROLE
+
+COPY . .
+RUN npm run build
+
+# ---------- Serve ----------
+FROM nginxinc/nginx-unprivileged:stable-alpine
+
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+
+EXPOSE 8080
+
+CMD ["nginx", "-g", "daemon off;"]

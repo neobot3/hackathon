@@ -3,7 +3,13 @@ from sqlalchemy import select
 
 from database import DbSession
 from models import MroLocation, TravelTime
-from schemas import MroLocationCreate, MroLocationRead, TravelTimeRead, TravelTimeUpsert
+from schemas import (
+    MroLocationCreate,
+    MroLocationRead,
+    MroLocationUpdate,
+    TravelTimeRead,
+    TravelTimeUpsert,
+)
 
 router = APIRouter(prefix="/mro-locations", tags=["mro locations"])
 
@@ -25,6 +31,15 @@ def get_mro_location(mro_id: int, db: DbSession) -> MroLocation:
 def create_mro_location(payload: MroLocationCreate, db: DbSession) -> MroLocation:
     mro = MroLocation(**payload.model_dump())
     db.add(mro)
+    db.commit()
+    return mro
+
+
+@router.patch("/{mro_id}", response_model=MroLocationRead)
+def update_mro_location(mro_id: int, payload: MroLocationUpdate, db: DbSession) -> MroLocation:
+    mro = get_mro_location(mro_id, db)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(mro, field, value)
     db.commit()
     return mro
 

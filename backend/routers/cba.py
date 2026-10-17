@@ -9,6 +9,7 @@ from database import DbSession
 from models import CbaRules, PayPeriod, ShiftPattern, StatutoryHoliday
 from schemas import (
     CbaRulesRead,
+    CbaRulesUpdate,
     PayPeriodCreate,
     PayPeriodRead,
     ShiftPatternRead,
@@ -30,6 +31,24 @@ def get_active_rules(db: DbSession, on: date | None = None) -> CbaRules:
     rules = scheduler.active_rules(db, on)
     if rules is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"No CBA rules in effect on {on}")
+    return rules
+
+
+@router.patch("/rules/{rules_id}", response_model=CbaRulesRead)
+def update_rules(rules_id: int, payload: CbaRulesUpdate, db: DbSession) -> CbaRules:
+    rules = db.get(CbaRules, rules_id)
+    if rules is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CBA rules not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(rules, field, value)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Update conflicts with another rule set (name or effective dates)",
+        ) from None
     return rules
 
 
