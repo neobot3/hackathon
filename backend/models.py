@@ -33,6 +33,7 @@ class MroLocation(Base):
     location: Mapped[str] = mapped_column(String(200))
     airport_code: Mapped[str | None] = mapped_column(String(3))
     timezone: Mapped[str] = mapped_column(String(64), default="UTC")
+    covering_base: Mapped[str | None] = mapped_column(String(200))
 
 
 class ShiftPattern(Base):
@@ -97,6 +98,18 @@ class CbaRules(Base):
     averaging_anchor_date: Mapped[date | None]
     consecutive_days_off_required: Mapped[int] = mapped_column(SmallInteger)
     aog_pay_buffer_hours: Mapped[Decimal] = mapped_column(Numeric(4, 2))
+    min_days_off_between_rotations: Mapped[int] = mapped_column(SmallInteger)
+    max_reps_off_per_week: Mapped[int] = mapped_column(SmallInteger)
+    continuity_lookback_days: Mapped[int] = mapped_column(SmallInteger)
+    schedule_publish_days: Mapped[int] = mapped_column(SmallInteger)
+
+
+class SickLeaveAllowance(Base):
+    __tablename__ = "sick_leave_allowance"
+
+    month: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+    max_days: Mapped[Decimal] = mapped_column(Numeric(4, 1))
+    needs_review: Mapped[bool] = mapped_column(default=True)
 
 
 class PayPeriod(Base):
@@ -141,6 +154,8 @@ class TechRep(Base):
     )
     shift_cycle_start: Mapped[date | None]
     banked_ot_hours: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal(0))
+    seniority_rank: Mapped[int | None]
+    phone: Mapped[str | None] = mapped_column(String(30))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -201,6 +216,9 @@ class MroDemand(Base):
     priority: Mapped[int] = mapped_column(SmallInteger, default=3)
     status: Mapped[str] = mapped_column(String(20), default="open")
     notes: Mapped[str | None] = mapped_column(String(500))
+    maintenance_event_id: Mapped[int | None] = mapped_column(
+        ForeignKey("maintenance_events.id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -246,3 +264,111 @@ class Assignment(Base):
     rep: Mapped[TechRep] = relationship()
     mro: Mapped[MroLocation] = relationship()
     aircraft_type: Mapped[AircraftType | None] = relationship()
+
+
+class TrainingType(Base):
+    __tablename__ = "training_types"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    recurrence_months: Mapped[int | None] = mapped_column(SmallInteger)
+    is_mandatory: Mapped[bool] = mapped_column(default=True)
+    aircraft_type_id: Mapped[int | None] = mapped_column(
+        ForeignKey("aircraft_types.id", ondelete="SET NULL")
+    )
+
+
+class RepTraining(Base):
+    __tablename__ = "rep_training"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rep_id: Mapped[int] = mapped_column(ForeignKey("tech_reps.id", ondelete="CASCADE"))
+    training_type_id: Mapped[int] = mapped_column(
+        ForeignKey("training_types.id", ondelete="RESTRICT")
+    )
+    completed_on: Mapped[date | None]
+    expires_on: Mapped[date | None]
+    scheduled_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scheduled_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(20), default="submitted")
+    unavailability_id: Mapped[int | None] = mapped_column(
+        ForeignKey("rep_unavailability.id", ondelete="SET NULL")
+    )
+    notes: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    training_type: Mapped[TrainingType] = relationship()
+
+
+class LeaveBalance(Base):
+    __tablename__ = "leave_balances"
+
+    rep_id: Mapped[int] = mapped_column(
+        ForeignKey("tech_reps.id", ondelete="CASCADE"), primary_key=True
+    )
+    year: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+    leave_type: Mapped[str] = mapped_column(String(10), primary_key=True)
+    entitled_days: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal(0))
+    used_days: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal(0))
+
+    @property
+    def remaining_days(self) -> Decimal:
+        return self.entitled_days - self.used_days
+
+
+class VacationBid(Base):
+    __tablename__ = "vacation_bids"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rep_id: Mapped[int] = mapped_column(ForeignKey("tech_reps.id", ondelete="CASCADE"))
+    year: Mapped[int] = mapped_column(SmallInteger)
+    week_start: Mapped[date]
+    preference_rank: Mapped[int] = mapped_column(SmallInteger)
+    status: Mapped[str] = mapped_column(String(20), default="submitted")
+    unavailability_id: Mapped[int | None] = mapped_column(
+        ForeignKey("rep_unavailability.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class MaintenanceEvent(Base):
+    __tablename__ = "maintenance_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    aircraft_type_id: Mapped[int] = mapped_column(
+        ForeignKey("aircraft_types.id", ondelete="RESTRICT")
+    )
+    mro_id: Mapped[int] = mapped_column(ForeignKey("mro_locations.id", ondelete="RESTRICT"))
+    tail_number: Mapped[str] = mapped_column(String(10))
+    event_type: Mapped[str] = mapped_column(String(20))
+    induction_date: Mapped[date]
+    rts_date: Mapped[date]
+    reps_required: Mapped[int] = mapped_column(SmallInteger, default=1)
+    status: Mapped[str] = mapped_column(String(20), default="planned")
+    notes: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class Alert(Base):
+    __tablename__ = "alerts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    alert_type: Mapped[str] = mapped_column(String(30))
+    severity: Mapped[str] = mapped_column(String(10), default="warning")
+    mro_id: Mapped[int | None] = mapped_column(ForeignKey("mro_locations.id", ondelete="CASCADE"))
+    rep_id: Mapped[int | None] = mapped_column(ForeignKey("tech_reps.id", ondelete="CASCADE"))
+    demand_id: Mapped[int | None] = mapped_column(ForeignKey("mro_demands.id", ondelete="CASCADE"))
+    assignment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("assignments.id", ondelete="CASCADE")
+    )
+    message: Mapped[str] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    acknowledged: Mapped[bool] = mapped_column(default=False)

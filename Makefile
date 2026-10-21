@@ -10,13 +10,14 @@ STAMP        := $(VENV)/.installed
 DB_CONTAINER := postgres-db
 DB_IMAGE     := postgres:18
 DB_PASSWORD  ?= my_suP3r_secure_p@ssw0rd
+DB_NAME      ?= techrep
 API_IMAGE    := techrep-backend
 WEB_IMAGE    := techrep-frontend
 VITE_API_BASE_URL ?= http://localhost:8000
 
 .PHONY: help install backend-install frontend-install dev backend frontend \
 	    lint format backend-lint backend-format frontend-lint frontend-format \
-	    db-up db-down db-reset db-shell docker-build docker-run \
+	    db-up db-down db-reset db-shell db-seed docker-build docker-run \
             frontend-docker-build clean
 
 help: ## List targets
@@ -82,6 +83,7 @@ db-up: ## Start Postgres in Docker (creates the container on first run)
 	    -e POSTGRES_DB=techrep \
 	    -p 5432:5432 \
 	    -v "$(CURDIR)/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro" \
+	    -v "$(CURDIR)/db/seed.sql:/docker-entrypoint-initdb.d/seed.sql:ro" \
 	    $(DB_IMAGE)
 
 db-down: ## Stop the Postgres container
@@ -93,6 +95,9 @@ db-reset: ## Delete the container and recreate the schema from init.sql
 
 db-shell: ## Open psql in the database container
 	docker exec -it $(DB_CONTAINER) psql -U techrep -d techrep
+
+db-seed: ## Load sample roster data from db/seed.sql into the running container
+	docker exec -i $(DB_CONTAINER) psql -v ON_ERROR_STOP=1 -U techrep -d $(DB_NAME) < db/seed.sql
 
 # ---------- Docker (backend) ----------
 

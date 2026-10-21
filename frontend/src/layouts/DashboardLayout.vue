@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { dashboardRoutes } from '@/router'
 import { useAuthStore } from '@/stores/auth'
 import { useReferenceStore } from '@/stores/reference'
 import { useToastStore } from '@/stores/toast'
@@ -18,6 +19,7 @@ const sections = computed(() => {
       links: [
         { to: '/admin', label: 'Overview', icon: 'M3 12l9-9 9 9M5 10v10h14V10' },
         { to: '/admin/reps', label: 'Tech reps', icon: 'M16 11a4 4 0 10-8 0 4 4 0 008 0zM4 21a8 8 0 0116 0' },
+        { to: '/admin/roster', label: 'Roster', icon: 'M3 4h18v16H3zM3 9h18M8 4v16M13 4v16M18 4v16' },
         { to: '/admin/aircraft-types', label: 'Aircraft types', icon: 'M2 16l20-6-20-6 4 6-4 6zM6 10h8' },
         { to: '/admin/mro-locations', label: 'MRO locations', icon: 'M12 21s-7-6.5-7-12a7 7 0 0114 0c0 5.5-7 12-7 12zM12 11a2 2 0 100-4 2 2 0 000 4z' },
         { to: '/admin/cba-rules', label: 'CBA rules', icon: 'M9 12l2 2 4-4M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z' },
@@ -37,6 +39,12 @@ const sections = computed(() => {
       ],
     })
   }
+  out.push({
+    title: 'Dashboards',
+    links: dashboardRoutes
+      .filter((r) => auth.canAny(r.meta.roles))
+      .map((r) => ({ to: r.path ? `/dashboards/${r.path}` : '/dashboards', ...r.meta.nav })),
+  })
   return out
 })
 

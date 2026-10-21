@@ -13,5 +13,7 @@ export const config = {
     apiScope: env.VITE_AZURE_API_SCOPE || '',
     adminRole: env.VITE_AZURE_ADMIN_ROLE || 'TechRep.Admin',
     schedulerRole: env.VITE_AZURE_SCHEDULER_ROLE || 'TechRep.Scheduler',
+    repRole: env.VITE_AZURE_REP_ROLE || 'TechRep.Rep',
+    viewerRole: env.VITE_AZURE_VIEWER_ROLE || 'TechRep.Viewer',
   },
 }

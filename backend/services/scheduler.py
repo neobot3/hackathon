@@ -1,13 +1,16 @@
 """Builds and solves a CP-SAT schedule from database rows and the active CBA rules.
 
-Hard constraints: certification, approved unavailability, no overlap, minimum rest,
-max duty day including travel, max consecutive worked days, consecutive days off in
-a rolling window, and the 40 h regular-hours average. The objective fills
-high-priority demands first, prefers volunteers, assigns mandatory work in reverse
-seniority, then minimizes premium pay including the overtime tier per pay period.
+Hard constraints: certification, approved unavailability and training, no overlap,
+minimum rest, max duty day including travel, max consecutive worked days, consecutive
+days off in a rolling window, the 40 h regular-hours average, and the weekly cap on reps
+on vacation. The objective grants requested vacation within the cap by seniority, fills
+high-priority demands, prefers volunteers, assigns mandatory work in reverse seniority,
+keeps reps at the MROs they worked recently, then minimizes premium pay including the
+overtime tier per pay period.
 """
 
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from decimal import Decimal
@@ -25,6 +28,7 @@ from models import (
     MroDemand,
     MroLocation,
     PayPeriod,
+    RepTraining,
     RepUnavailability,
     StatutoryHoliday,
     TechRep,
@@ -37,18 +41,24 @@ from schemas import (
     UnfilledDemand,
 )
 
-# Each objective tier outweighs everything below it:
-# coverage by priority > volunteer over mandatory > reverse seniority > premium pay.
+# Each objective tier outweighs everything below it: granted vacation > coverage by
+# priority > volunteer over mandatory > reverse seniority > continuity and home team >
+# premium pay.
+VACATION_WEIGHT = 10**13
 PRIORITY_WEIGHT = 10**10
 MANDATORY_PENALTY = 10**9
 SENIORITY_STEP = 10**7
 MAX_SENIORITY_RANK = 50
+# Full weight for a rep whose recent work was all at the demand's MRO.
+CONTINUITY_WEIGHT = 10**6
+# For a rep based where the team covering the MRO is based.
+HOME_TEAM_WEIGHT = 10**6
 # The model uses hundredths of an hour and rates in percent, so a premium cost is
 # (rate - 100) * hundredths.
 HOUR = 100
 
 BLOCKED_MESSAGES = {
-    "unavailable": "on approved leave",
+    "unavailable": "on approved leave or training",
     "booked": "already booked or short of minimum rest",
     "duty": "over the max duty day once travel is added",
     "declined": "did not accept; set allow_mandatory to assign in reverse seniority",
@@ -62,6 +72,7 @@ class NoActiveRulesError(Exception):
 @dataclass
 class _Pair:
     field_service: bool
+    home_team: bool
     mandatory: bool
     travel_hours: float
     paid_hours: float
@@ -90,6 +101,15 @@ def _tz(name: str) -> tzinfo:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError):
         return UTC
+
+
+def home_tz(rep: TechRep, mros: Iterable[MroLocation]) -> tzinfo:
+    """Timezone of the MRO at the rep's home base, or UTC when none matches."""
+    home = rep.home_base.strip().lower()
+    for m in mros:
+        if home in {m.location.strip().lower(), (m.airport_code or "").strip().lower()}:
+            return _tz(m.timezone)
+    return UTC
 
 
 def _hours_by_local_date(start: datetime, end: datetime, tz: tzinfo) -> dict[date, float]:
@@ -131,6 +151,13 @@ def _is_field_service(rep: TechRep, mro: MroLocation) -> bool:
     return home not in local
 
 
+def is_home_team(rep: TechRep, mro: MroLocation) -> bool:
+    """The rep is on the team that covers the MRO, so is kept closest to home."""
+    return bool(mro.covering_base) and (
+        rep.home_base.strip().lower() == mro.covering_base.strip().lower()
+    )
+
+
 def _overlaps(a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime) -> bool:
     return a_start < b_end and b_start < a_end
 
@@ -166,11 +193,16 @@ def _averaging_period(rules: CbaRules, rep: TechRep, day: date) -> tuple[date, d
     return start, start + length
 
 
-def _junior_first(rep: TechRep) -> tuple[int, int]:
-    """Sort key: latest seniority date first; reps without one count as most junior."""
-    if rep.union_seniority_date is None:
-        return (0, 0)
-    return (1, -rep.union_seniority_date.toordinal())
+def seniority_key(rep: TechRep) -> tuple[bool, int, int]:
+    """Sort key, most senior first: lower employee ID is more senior.
+
+    A set seniority_rank (e.g. for a rehire) overrides the ID; ranked reps sort first.
+    """
+    return (
+        rep.seniority_rank is None,
+        rep.seniority_rank or 0,
+        rep.id,
+    )
 
 
 def run(db: Session, req: ScheduleRunRequest) -> ScheduleRunResponse:
@@ -248,6 +280,36 @@ def run(db: Session, req: ScheduleRunRequest) -> ScheduleRunResponse:
             )
         )
     )
+    # Approved training blocks the rep; most already have a leave row from approval.
+    unavailable.extend(
+        RepUnavailability(
+            rep_id=t.rep_id,
+            reason="training",
+            start_time=t.scheduled_start,
+            end_time=t.scheduled_end,
+            status="approved",
+        )
+        for t in db.scalars(
+            select(RepTraining).where(
+                RepTraining.status == "approved",
+                RepTraining.unavailability_id.is_(None),
+                RepTraining.scheduled_end > lo,
+                RepTraining.scheduled_start < hi,
+            )
+        )
+    )
+    vacation_requests = [
+        u
+        for u in db.scalars(
+            select(RepUnavailability).where(
+                RepUnavailability.reason == "vacation",
+                RepUnavailability.status == "requested",
+                RepUnavailability.end_time > req.start_time,
+                RepUnavailability.start_time < req.end_time,
+            )
+        )
+        if u.rep_id in reps_by_id
+    ]
     holidays = set(
         db.scalars(
             select(StatutoryHoliday.holiday_date).where(
@@ -414,6 +476,7 @@ def run(db: Session, req: ScheduleRunRequest) -> ScheduleRunResponse:
             x[rep.id, d.id] = model.new_bool_var(f"x_{rep.id}_{d.id}")
             pairs[rep.id, d.id] = _Pair(
                 field_service=field,
+                home_team=is_home_team(rep, mro),
                 mandatory=mandatory,
                 travel_hours=travel_hours,
                 paid_hours=round(paid, 2),
@@ -429,8 +492,9 @@ def run(db: Session, req: ScheduleRunRequest) -> ScheduleRunResponse:
             if mandatory:
                 mandatory_here.append(rep)
 
-        # 16-1.06, 21-2.09, 21-3.08: mandatory work goes in reverse Union Seniority.
-        for rank, rep in enumerate(sorted(mandatory_here, key=_junior_first)):
+        # 16-1.06, 21-2.09, 21-3.08: mandatory work goes in reverse seniority.
+        junior_first = sorted(mandatory_here, key=seniority_key, reverse=True)
+        for rank, rep in enumerate(junior_first):
             seniority_rank[rep.id, d.id] = min(rank, MAX_SENIORITY_RANK)
 
         demand_vars = [v for (_, q), v in x.items() if q == d.id]
@@ -439,6 +503,74 @@ def run(db: Session, req: ScheduleRunRequest) -> ScheduleRunResponse:
 
     for home, facility in sorted(missing_travel):
         warnings.append(f"No travel time from {home} to {facility}; assumed 0 h")
+
+    # Weekly cap on reps on vacation, counting approved leave and granted requests.
+    mro_list = list(mros.values())
+    cap = rules.max_reps_off_per_week
+
+    def weeks_of(u: RepUnavailability) -> set[date]:
+        tz = home_tz(reps_by_id[u.rep_id], mro_list)
+        days = _hours_by_local_date(u.start_time, u.end_time, tz)
+        return {d - timedelta(days=d.weekday()) for d in days}
+
+    approved_off: dict[date, set[int]] = defaultdict(set)
+    for u in unavailable:
+        if u.reason == "vacation" and u.rep_id in reps_by_id:
+            for week in weeks_of(u):
+                approved_off[week].add(u.rep_id)
+    first_week = req.start_time.date() - timedelta(days=6)
+    for week, off in sorted(approved_off.items()):
+        if len(off) > cap and first_week <= week < req.end_time.date():
+            warnings.append(
+                f"Week of {week}: {len(off)} reps already on approved vacation, "
+                f"over the limit of {cap}"
+            )
+
+    grant: dict[int, cp_model.IntVar] = {}
+    requesters = sorted({reps_by_id[u.rep_id] for u in vacation_requests}, key=seniority_key)
+    vacation_rank = {r.id: min(i, MAX_SENIORITY_RANK) for i, r in enumerate(requesters)}
+    requested_off: dict[date, dict[int, list[cp_model.IntVar]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for u in vacation_requests:
+        if any(_overlaps(s, e, u.start_time, u.end_time) for s, e, _ in busy_by_rep[u.rep_id]):
+            warnings.append(f"Vacation request {u.id} overlaps existing assignments")
+            continue
+        grant[u.id] = g = model.new_bool_var(f"vac_{u.id}")
+        for week in weeks_of(u):
+            if u.rep_id not in approved_off[week]:
+                requested_off[week][u.rep_id].append(g)
+        for (r, q), v in x.items():
+            p = pairs[r, q]
+            if r == u.rep_id and _overlaps(p.busy_start, p.busy_end, u.start_time, u.end_time):
+                model.add(g + v <= 1)
+    for week, by_rep in requested_off.items():
+        off_vars: list[cp_model.IntVar] = []
+        for rep_id, grants in by_rep.items():
+            if len(grants) == 1:
+                off_vars.append(grants[0])
+            else:
+                off = model.new_bool_var(f"vac_week_{rep_id}_{week.isoformat()}")
+                model.add_max_equality(off, grants)
+                off_vars.append(off)
+        model.add(sum(off_vars) <= max(0, cap - len(approved_off[week])))
+
+    # Continuity: each rep's share of recent worked days at each MRO.
+    lookback = req.start_time - timedelta(days=rules.continuity_lookback_days)
+    days_at: Counter[tuple[int, int]] = Counter()
+    for a in db.scalars(
+        select(Assignment).where(
+            Assignment.status != "cancelled",
+            Assignment.start_time >= lookback,
+            Assignment.start_time < req.start_time,
+        )
+    ):
+        tz = _tz(mros[a.mro_id].timezone)
+        days_at[a.rep_id, a.mro_id] += len(_hours_by_local_date(a.start_time, a.end_time, tz))
+    days_worked: Counter[int] = Counter()
+    for (rep_id, _), n in days_at.items():
+        days_worked[rep_id] += n
+    continuity = {key: CONTINUITY_WEIGHT * n // days_worked[key[0]] for key, n in days_at.items()}
 
     demands_by_id = {d.id: d for d in demands}
     reg_vars: dict[tuple[int, int], cp_model.IntVar] = {}
@@ -556,12 +688,18 @@ def run(db: Session, req: ScheduleRunRequest) -> ScheduleRunResponse:
         p = pairs[r, q]
         value = (
             PRIORITY_WEIGHT * (6 - demands_by_id[q].priority)
+            + continuity.get((r, demands_by_id[q].mro_id), 0)
+            + (HOME_TEAM_WEIGHT if p.home_team else 0)
             - p.fixed_cost
             - (p.flex_ot_rate + 1) * _hundredths(p.flexible_hours)
         )
         if p.mandatory:
             value -= MANDATORY_PENALTY + SENIORITY_STEP * seniority_rank[r, q]
         objective.append(value * v)
+    for u in vacation_requests:
+        if u.id in grant:
+            weight = VACATION_WEIGHT - SENIORITY_STEP * vacation_rank[u.rep_id]
+            objective.append(weight * grant[u.id])
     # The +1 keeps hours regular when the overtime rate would cost nothing extra.
     for (r, q), reg in reg_vars.items():
         objective.append((pairs[r, q].flex_ot_rate + 1) * reg)
@@ -621,7 +759,12 @@ def run(db: Session, req: ScheduleRunRequest) -> ScheduleRunResponse:
             )
         unfilled.append(UnfilledDemand(demand_id=d.id, still_needed=still_needed, reason=reason))
 
-    if req.save and proposals:
+    granted = [
+        u for u in vacation_requests if u.id in grant and solved and solver.value(grant[u.id])
+    ]
+    if req.save and (proposals or granted):
+        for u in granted:
+            u.status = "approved"
         rows = [
             Assignment(
                 rep_id=p.rep_id,
@@ -654,4 +797,6 @@ def run(db: Session, req: ScheduleRunRequest) -> ScheduleRunResponse:
         assignments=proposals,
         unfilled=unfilled,
         warnings=warnings,
+        vacation_granted=[u.id for u in granted],
+        vacation_not_granted=sorted({u.id for u in vacation_requests} - {u.id for u in granted}),
     )

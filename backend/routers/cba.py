@@ -1,18 +1,21 @@
 from datetime import date
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Path, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from database import DbSession
-from models import CbaRules, PayPeriod, ShiftPattern, StatutoryHoliday
+from models import CbaRules, PayPeriod, ShiftPattern, SickLeaveAllowance, StatutoryHoliday
 from schemas import (
     CbaRulesRead,
     CbaRulesUpdate,
     PayPeriodCreate,
     PayPeriodRead,
     ShiftPatternRead,
+    SickLeaveAllowanceRead,
+    SickLeaveAllowanceUpdate,
     StatutoryHolidayBase,
 )
 from services import scheduler
@@ -124,3 +127,25 @@ def delete_pay_period(period_id: int, db: DbSession) -> None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Pay period not found")
     db.delete(period)
     db.commit()
+
+
+@router.get("/sick-leave-allowance", response_model=list[SickLeaveAllowanceRead])
+def list_sick_leave_allowance(db: DbSession) -> list[SickLeaveAllowance]:
+    """Sick days a rep may take from the 1st of each month to year end."""
+    return list(db.scalars(select(SickLeaveAllowance).order_by(SickLeaveAllowance.month)))
+
+
+@router.put("/sick-leave-allowance/{month}", response_model=SickLeaveAllowanceRead)
+def update_sick_leave_allowance(
+    month: Annotated[int, Path(ge=1, le=12)], payload: SickLeaveAllowanceUpdate, db: DbSession
+) -> SickLeaveAllowance:
+    """Set a month's allowance. This also clears needs_review."""
+    row = db.get(SickLeaveAllowance, month)
+    if row is None:
+        row = SickLeaveAllowance(month=month)
+        db.add(row)
+    row.max_days = payload.max_days
+    row.needs_review = False
+    db.commit()
+    db.refresh(row)
+    return row

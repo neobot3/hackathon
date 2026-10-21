@@ -31,7 +31,7 @@ const routes = [
 ]
 
 const stats = [
-  { value: 92, suffix: '-day', label: 'Planning horizon per run' },
+  { value: 366, suffix: '-day', label: 'Planning horizon per run' },
   { value: 10, prefix: '<', suffix: 's', label: 'Typical CP-SAT solve time' },
   { value: 20, suffix: '+', label: 'CBA work/rest rules enforced' },
   { value: 24, suffix: '/7', label: 'AOG response coverage' },

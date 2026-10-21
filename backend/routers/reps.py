@@ -42,6 +42,8 @@ def create_rep(payload: TechRepCreate, db: DbSession) -> TechRep:
         shift_pattern_code=payload.shift_pattern_code,
         shift_cycle_start=payload.shift_cycle_start,
         banked_ot_hours=payload.banked_ot_hours,
+        seniority_rank=payload.seniority_rank,
+        phone=payload.phone,
         certifications=[
             TechRepCertification(aircraft_type_id=type_id)
             for type_id in set(payload.certified_aircraft_type_ids)

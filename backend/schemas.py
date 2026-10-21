@@ -23,11 +23,56 @@ UnavailabilityReason = Literal[
     "other",
 ]
 UnavailabilityStatus = Literal["requested", "approved", "denied", "cancelled"]
-DemandType = Literal["base_coverage", "aog"]
+DemandType = Literal[
+    "base_coverage",
+    "aog",
+    "heavy_check",
+    "induction",
+    "rts",
+    "lease_return",
+    "hard_landing",
+    "hail_damage",
+    "mro_support",
+]
 DemandStatus = Literal["open", "filled", "cancelled"]
 DemandResponseValue = Literal["accepted", "declined"]
 AssignmentStatus = Literal["proposed", "confirmed", "in_progress", "completed", "cancelled"]
 OvertimeType = Literal["none", "voluntary", "mandatory"]
+# Digits with optional +, spaces, dots, dashes, and brackets, e.g. (437) 995-6452.
+PHONE_PATTERN = r"^[0-9+() .-]{7,30}$"
+TrainingStatus = Literal["submitted", "approved", "rejected"]
+LeaveType = Literal["vacation", "stat", "sick"]
+BidStatus = Literal["submitted", "awarded", "denied", "withdrawn"]
+MaintenanceEventType = Literal[
+    "heavy_check",
+    "induction",
+    "rts",
+    "aog",
+    "lease_return",
+    "hard_landing",
+    "hail_damage",
+    "mro_support",
+]
+MaintenanceEventStatus = Literal["planned", "in_progress", "completed", "cancelled"]
+AlertType = Literal[
+    "coverage_gap",
+    "no_qualified_rep",
+    "shortage",
+    "date_conflict",
+    "training_due",
+    "training_expired",
+    "training_conflict",
+    "vacation_limit",
+    "sick_limit",
+    "rest",
+    "shift_pattern",
+    "qualification",
+    "seniority",
+    "no_aircraft",
+    "schedule_horizon",
+    "vacation_unused",
+]
+AlertSeverity = Literal["info", "warning", "critical"]
 
 
 def _check_timezone(value: str) -> str:
@@ -61,6 +106,8 @@ class TechRepCreate(BaseModel):
     shift_pattern_code: str | None = Field(default=None, max_length=10)
     shift_cycle_start: date | None = None
     banked_ot_hours: float = Field(default=0, ge=0, le=80)
+    seniority_rank: int | None = Field(default=None, ge=1)
+    phone: str | None = Field(default=None, pattern=PHONE_PATTERN)
     certified_aircraft_type_ids: list[int] = Field(default_factory=list, max_length=100)
 
 
@@ -78,6 +125,8 @@ class TechRepRead(BaseModel):
     shift_pattern_code: str | None
     shift_cycle_start: date | None
     banked_ot_hours: float
+    seniority_rank: int | None
+    phone: str | None
     certified_aircraft_type_ids: list[int]
 
 
@@ -135,6 +184,10 @@ class CbaRulesRead(BaseModel):
     averaging_anchor_date: date | None
     consecutive_days_off_required: int
     aog_pay_buffer_hours: float
+    min_days_off_between_rotations: int
+    max_reps_off_per_week: int
+    continuity_lookback_days: int
+    schedule_publish_days: int
 
 
 # Bounds mirror the Numeric/SmallInteger column sizes in models.CbaRules.
@@ -166,6 +219,10 @@ class CbaRulesUpdate(BaseModel):
     averaging_anchor_date: date | None = None
     consecutive_days_off_required: int | None = Field(default=None, ge=0, le=14)
     aog_pay_buffer_hours: float | None = Field(default=None, ge=0, le=99.99)
+    min_days_off_between_rotations: int | None = Field(default=None, ge=0, le=14)
+    max_reps_off_per_week: int | None = Field(default=None, ge=0, le=1000)
+    continuity_lookback_days: int | None = Field(default=None, ge=0, le=3650)
+    schedule_publish_days: int | None = Field(default=None, ge=0, le=365)
 
     @model_validator(mode="after")
     def _required_not_null(self) -> Self:
@@ -181,6 +238,18 @@ class StatutoryHolidayBase(BaseModel):
 
     holiday_date: date
     name: str = Field(min_length=1, max_length=100)
+
+
+class SickLeaveAllowanceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    month: int
+    max_days: float
+    needs_review: bool
+
+
+class SickLeaveAllowanceUpdate(BaseModel):
+    max_days: float = Field(ge=0, le=365)
 
 
 # Rep unavailability
@@ -217,6 +286,7 @@ class DemandCreate(_TimeWindow):
     reps_needed: int = Field(default=1, ge=1, le=50)
     priority: int = Field(default=3, ge=1, le=5)
     notes: str | None = Field(default=None, max_length=500)
+    maintenance_event_id: int | None = None
 
 
 class DemandRead(BaseModel):
@@ -232,6 +302,7 @@ class DemandRead(BaseModel):
     priority: int
     status: DemandStatus
     notes: str | None
+    maintenance_event_id: int | None
 
 
 class DemandStatusUpdate(BaseModel):
@@ -266,6 +337,8 @@ class TechRepUpdate(BaseModel):
     shift_pattern_code: str | None = Field(default=None, max_length=10)
     shift_cycle_start: date | None = None
     banked_ot_hours: float | None = Field(default=None, ge=0, le=80)
+    seniority_rank: int | None = Field(default=None, ge=1)
+    phone: str | None = Field(default=None, pattern=PHONE_PATTERN)
 
     @model_validator(mode="after")
     def _required_not_null(self) -> Self:
@@ -323,6 +396,8 @@ class MroLocationCreate(BaseModel):
     location: str = Field(min_length=1, max_length=200)
     airport_code: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     timezone: str = Field(default="UTC", max_length=64)
+    # Home base whose team covers this MRO.
+    covering_base: str | None = Field(default=None, max_length=200)
 
     @field_validator("timezone")
     @classmethod
@@ -341,6 +416,7 @@ class MroLocationUpdate(BaseModel):
     location: str | None = Field(default=None, min_length=1, max_length=200)
     airport_code: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     timezone: str | None = Field(default=None, max_length=64)
+    covering_base: str | None = Field(default=None, max_length=200)
 
     @field_validator("timezone")
     @classmethod
@@ -385,6 +461,296 @@ class PayPeriodRead(PayPeriodCreate):
     id: int
 
 
+def _reject_nulls(model: BaseModel, names: tuple[str, ...]) -> None:
+    for name in names:
+        if name in model.model_fields_set and getattr(model, name) is None:
+            raise ValueError(f"{name} cannot be null")
+
+
+# Training
+
+class TrainingTypeCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    # None for one-off training.
+    recurrence_months: int | None = Field(default=None, ge=1, le=120)
+    is_mandatory: bool = True
+    # Endorsement courses: completing one certifies the rep on this aircraft type.
+    aircraft_type_id: int | None = None
+
+
+class TrainingTypeRead(TrainingTypeCreate):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+
+
+class TrainingTypeUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    recurrence_months: int | None = Field(default=None, ge=1, le=120)
+    is_mandatory: bool | None = None
+    aircraft_type_id: int | None = None
+
+    @model_validator(mode="after")
+    def _required_not_null(self) -> Self:
+        _reject_nulls(self, ("name", "is_mandatory"))
+        return self
+
+
+class _TrainingDates(BaseModel):
+    completed_on: date | None = None
+    expires_on: date | None = None
+    scheduled_start: AwareDatetime | None = None
+    scheduled_end: AwareDatetime | None = None
+    notes: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _check_dates(self) -> Self:
+        start, end = self.scheduled_start, self.scheduled_end
+        if start and end and end <= start:
+            raise ValueError("scheduled_end must be after scheduled_start")
+        if self.completed_on and self.expires_on and self.expires_on < self.completed_on:
+            raise ValueError("expires_on must be on or after completed_on")
+        return self
+
+
+class RepTrainingCreate(_TrainingDates):
+    """expires_on defaults to completed_on plus the type's recurrence."""
+
+    rep_id: int
+    training_type_id: int
+
+    @model_validator(mode="after")
+    def _dates_together(self) -> Self:
+        if (self.scheduled_start is None) != (self.scheduled_end is None):
+            raise ValueError("scheduled_start and scheduled_end go together")
+        return self
+
+
+class RepTrainingRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    rep_id: int
+    training_type_id: int
+    completed_on: date | None
+    expires_on: date | None
+    scheduled_start: datetime | None
+    scheduled_end: datetime | None
+    status: TrainingStatus
+    unavailability_id: int | None
+    notes: str | None
+
+
+class RepTrainingUpdate(_TrainingDates):
+    """Only fields sent are changed."""
+
+
+# Leave balances
+
+class LeaveBalanceUpsert(BaseModel):
+    entitled_days: float = Field(ge=0, le=999.99)
+    used_days: float = Field(default=0, ge=0, le=999.99)
+
+
+class LeaveBalanceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    rep_id: int
+    year: int
+    leave_type: LeaveType
+    entitled_days: float
+    used_days: float
+    remaining_days: float
+
+
+# Vacation bids
+
+class VacationBidCreate(BaseModel):
+    rep_id: int
+    year: int = Field(ge=2000, le=2100)
+    week_start: date
+    preference_rank: int = Field(ge=1, le=52)
+
+    @field_validator("week_start")
+    @classmethod
+    def _monday(cls, value: date) -> date:
+        if value.isoweekday() != 1:
+            raise ValueError("week_start must be a Monday")
+        return value
+
+
+class VacationBidRead(VacationBidCreate):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: BidStatus
+    unavailability_id: int | None
+
+
+class VacationBidUpdate(BaseModel):
+    preference_rank: int | None = Field(default=None, ge=1, le=52)
+    status: BidStatus | None = None
+
+    @model_validator(mode="after")
+    def _required_not_null(self) -> Self:
+        _reject_nulls(self, ("preference_rank", "status"))
+        return self
+
+
+class VacationAwardRequest(BaseModel):
+    year: int = Field(ge=2000, le=2100)
+
+
+class VacationAwardDenied(BaseModel):
+    bid_id: int
+    rep_id: int
+    week_start: date
+    reason: str
+
+
+class VacationAwardResult(BaseModel):
+    year: int
+    awarded: list[int]
+    denied: list[VacationAwardDenied]
+
+
+class VacationCapacityWeek(BaseModel):
+    week_start: date
+    cap: int
+    reps_off: int
+    remaining: int
+    rep_ids: list[int]
+
+
+class TrainingDue(BaseModel):
+    rep_id: int
+    rep_name: str
+    training_type_id: int
+    training_type_name: str
+    is_mandatory: bool
+    # None when the rep has never completed this training.
+    expires_on: date | None
+    days_left: int | None
+    # Next submitted or approved session for this training, if any.
+    next_scheduled_start: datetime | None
+    # Calgary, or Toronto for eastern-based reps.
+    location: str
+
+
+# Maintenance events
+
+class MaintenanceEventCreate(BaseModel):
+    aircraft_type_id: int
+    mro_id: int
+    tail_number: str = Field(min_length=1, max_length=10)
+    event_type: MaintenanceEventType
+    induction_date: date
+    rts_date: date
+    # Left out: the recommended staffing for the event type.
+    reps_required: int | None = Field(default=None, ge=1, le=50)
+    notes: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _rts_after_induction(self) -> Self:
+        if self.rts_date < self.induction_date:
+            raise ValueError("rts_date must be on or after induction_date")
+        return self
+
+
+class MaintenanceEventRead(MaintenanceEventCreate):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    reps_required: int
+    status: MaintenanceEventStatus
+    created_at: datetime
+
+
+class MaintenanceEventWithDemands(MaintenanceEventRead):
+    # Live demands generated for the event, one per support shift.
+    demand_ids: list[int] = Field(default_factory=list)
+
+
+class MaintenanceEventUpdate(BaseModel):
+    tail_number: str | None = Field(default=None, min_length=1, max_length=10)
+    induction_date: date | None = None
+    rts_date: date | None = None
+    reps_required: int | None = Field(default=None, ge=1, le=50)
+    status: MaintenanceEventStatus | None = None
+    notes: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _required_not_null(self) -> Self:
+        _reject_nulls(
+            self, ("tail_number", "induction_date", "rts_date", "reps_required", "status")
+        )
+        return self
+
+
+class CsvImportResult(BaseModel):
+    created: int
+    ids: list[int]
+
+
+# Alerts
+
+class AlertCreate(BaseModel):
+    alert_type: AlertType
+    severity: AlertSeverity = "warning"
+    mro_id: int | None = None
+    rep_id: int | None = None
+    demand_id: int | None = None
+    assignment_id: int | None = None
+    message: str = Field(min_length=1, max_length=500)
+
+
+class AlertRead(AlertCreate):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: datetime
+    acknowledged: bool
+
+
+class AlertUpdate(BaseModel):
+    acknowledged: bool
+
+
+class AlertScanResult(BaseModel):
+    created: int
+    resolved: int
+
+
+# Dashboards
+
+class WorkforceRep(BaseModel):
+    rep_id: int
+    name: str
+    home_base: str
+    status: Literal["assigned", "on_leave", "available"]
+    mro_ids: list[int]
+    leave_reasons: list[str]
+    assigned_hours: float
+
+
+class WorkforceSummary(BaseModel):
+    start: datetime
+    end: datetime
+    available: int
+    assigned: int
+    on_leave: int
+    reps: list[WorkforceRep]
+
+
+class CoverageWeek(BaseModel):
+    mro_id: int
+    week_start: date
+    shifts: int
+    seats_needed: int
+    seats_filled: int
+    gap: int
+
+
 # Assignments
 
 class AssignmentCreate(_TimeWindow):
@@ -415,8 +781,99 @@ class AssignmentRead(BaseModel):
     created_at: datetime
 
 
-class AssignmentStatusUpdate(BaseModel):
-    status: AssignmentStatus
+class AssignmentUpdate(BaseModel):
+    """Only fields sent are changed. Rep and times can change on live assignments."""
+
+    status: AssignmentStatus | None = None
+    rep_id: int | None = None
+    start_time: AwareDatetime | None = None
+    end_time: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def _required_not_null(self) -> Self:
+        _reject_nulls(self, ("status", "rep_id", "start_time", "end_time"))
+        return self
+
+
+class ComplianceWarning(BaseModel):
+    alert_type: AlertType
+    severity: AlertSeverity
+    message: str
+    rep_id: int
+    mro_id: int | None = None
+    demand_id: int | None = None
+    assignment_id: int | None = None
+
+
+class AssignmentWithWarnings(AssignmentRead):
+    warnings: list[ComplianceWarning] = Field(default_factory=list)
+
+
+class TrainingApproval(RepTrainingRead):
+    cancelled_assignment_ids: list[int] = Field(default_factory=list)
+    warnings: list[ComplianceWarning] = Field(default_factory=list)
+
+
+class TrainingRejection(BaseModel):
+    # Sent back to the training department with the record.
+    note: str | None = Field(default=None, max_length=400)
+
+
+# Overtime
+
+class EligibleRep(BaseModel):
+    rep_id: int
+    name: str
+    seniority_rank: int | None
+    # Reply to a solicitation for this demand, if any.
+    response: DemandResponseValue | None
+    field_service: bool
+    # True when the rep is based at the MRO's covering base; that team is asked first.
+    home_team: bool
+    # True when the demand falls on a shift pattern day off; None without a pattern.
+    pattern_day_off: bool | None
+
+
+class IneligibleRep(BaseModel):
+    rep_id: int
+    name: str
+    reason: str
+
+
+class OvertimeOpportunity(BaseModel):
+    demand_id: int
+    mro_id: int
+    aircraft_type_id: int
+    demand_type: DemandType
+    start_time: datetime
+    end_time: datetime
+    priority: int
+    reps_needed: int
+    still_needed: int
+    # Most senior first: the order to offer voluntary overtime. Mandatory overtime
+    # goes from the end of the list (reverse seniority).
+    eligible: list[EligibleRep]
+    ineligible: list[IneligibleRep]
+
+
+class Reassignment(BaseModel):
+    rep_id: int
+    name: str
+    seniority_rank: int | None
+    # The lower-priority work the rep would move off.
+    assignment_id: int
+    from_mro_id: int
+    from_demand_id: int | None
+    from_priority: int | None
+
+
+class EventStaffingOption(OvertimeOpportunity):
+    reassignments: list[Reassignment]
+
+
+class EventStaffingOptions(BaseModel):
+    event_id: int
+    demands: list[EventStaffingOption]
 
 
 # Scheduling solver
@@ -449,7 +906,7 @@ class SolveResponse(BaseModel):
 
 # Database-driven scheduling run
 
-MAX_RUN_DAYS = 92
+MAX_RUN_DAYS = 366
 
 
 class ScheduleRunRequest(_TimeWindow):
@@ -493,3 +950,9 @@ class ScheduleRunResponse(BaseModel):
     assignments: list[ProposedAssignment]
     unfilled: list[UnfilledDemand]
     warnings: list[str] = Field(default_factory=list)
+    # Requested vacation (rep_unavailability IDs) granted within the weekly cap, or not.
+    # With save, granted requests are approved.
+    vacation_granted: list[int] = Field(default_factory=list)
+    vacation_not_granted: list[int] = Field(default_factory=list)
+    # Compliance findings on the saved schedule; also written to alerts.
+    violations: list[ComplianceWarning] = Field(default_factory=list)

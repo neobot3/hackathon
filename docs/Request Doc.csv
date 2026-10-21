@@ -1,0 +1,94 @@
+Process ID,Process,BR#,Requirement ,Acceptance Criteria and/or notes,Priority,Status
+Funtional Requirements,Employee Profile Management,1.00,"The system shall maintain employee information:
+-Home base location
+-Qualifications and endorsements: (B737NG, MAX, BCF, Q400, B787)
+-Seniority ranking (it is not determined by the employee ID  number; for example, if a tech rep leaves and comes back, the seniority is not honoured, but the employee ID is reactivated) 
+-Training records
+-Vacation balances
+-Stat holiday balances
+-Sick leave balances",Users should be able to generate a baseline annual schedule with minimal manual intervention ,,
+Funtional Requirements,Automated Schedule Generation,2.00,"The system shall generate schedules for an entire year
+and create assignments based on:
+-Qualifications
+-Home base
+-Available manpower
+-Maintenance workload
+-Approved vacations (no more than 3 reps can be off in the same week) - Vacation assignment is based on bidding, and it is determined between (october/november) of the previous year   
+-Stat holidays
+-Training requirements",,,
+Funtional Requirements,Training Integration,3.00,"The system shall track 
+
+-Mandatory recurrent training
+-Endorsement certification training
+-Monitor training expiry dates
+-Automatically identify employees due for training
+-Prevent schedule assignments that conflict with mandatory training","-Training department can submit training dates electronically
+- Scheduler can approve or reject training dates
+- Approved training automatically updates schedules",,
+Funtional Requirements,Vacation Planning & Management,4.00,"The system shall:
+
+-Import annual vacation bids
+-Apply vacation awards according to seniority
+-Enforce vacation allotment limits
+-Automatically block approved vacation periods
+-Display remaining vacation balance
+-Display available vacation capacity by period",Integrate Vacation planing ,,
+Funtional Requirements,Overtime Management,5.00,"The system shall:
+
+-Identify overtime opportunities
+-Determine eligible employees
+-Validate (Required qualifications, Rest requirements, Availability)
+-Support overtime distribution according to CBA rules
+-Rank qualified employees by seniority where applicable",Integrate overtime managemnet ,,
+Funtional Requirements,Compliance Validation,6.00,"The system shall automatically validate:
+
+- Minimum rest requirements (2 days between shifts )
+-7-on / 7-off schedule compliance
+-Training compliance
+-Vacation limits
+-Sick leave availability (Sick days will be reduced during the year; for example, in January you will have 12 days sick VS October 4 days sick for the rest of the year)
+-Qualification requirements
+-Seniority requirements where applicable",The system shall alert users when violations occur.,,
+Funtional Requirements,Maintenance Schedule Integration,7.00,"The system shall integrate with:
+
+- Heavy Maintenance Schedule
+- Aircraft inductions
+- Aircraft RTS 
+
+The system shall:
+
+-Recommend staffing requirements per maintenance event
+-Flag staffing gaps
+-Adjust schedules when aircraft dates change8 including support and  end of shift when the aircraft RTS ",Pull information from the HMS to assign tech reps ,,
+Funtional Requirements,Operational Event Management,8.00,"The solution shall support unplanned events such as:
+
+-AOGs
+-Lease returns
+-Hard landings
+-Hail damage programs
+-Additional MRO support requirements
+
+The system shall identify available qualified resources and recommend reassignment options.",Pull information from the HMS to make changes for unplanned events ,,
+Funtional Requirements,Continuity Planning,9.00,"The system shall:
+
+-Minimize unnecessary movement between MROs
+-Prioritize continuity of Tech Reps at the same MRO when possible
+-Consider historical assignments when generating schedules",Assign consistency tech reps per location ,,
+Funtional Requirements,Alerts,10.00,"The system shall notify users (leaders) when:
+
+-Coverage gaps exist
+-No qualified resource is available
+-Training is due
+-Vacation and sick days  limits are exceeded
+-Aircraft delivery dates conflict with staffing
+-Resource shortages are anticipated",Generate alerts per location ,,
+Funtional Requirements,Dashboard & Reporting,11.00,"The solution shall provide:
+
+- Workforce Dashboard for managers, team members and other users to see (Available resources, Assigned resources) 
+
+-Training Dashboard for only the manager and team members to see (Upcoming expiries, Certification status)
+
+-Vacation Dashboard for managers, team members and other users to see (Scheduled vacation). Only manager and personal view (Remaining balances)
+
+- Coverage Dashboard for managers, team members and other users to see (MRO staffing levels, Future staffing gaps)",Have a visual dashboard and  level for data viewers  ,,
+Funtional Requirements,Modifications ,12.00,Manual modifictaion shall be permitted ,Allow owner to modify manually if any chnages are required ,,

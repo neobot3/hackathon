@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { authProvider } from '@/auth'
-import { hasRole, ROLES } from '@/auth/roles'
+import { hasAnyRole, hasRole, ROLES } from '@/auth/roles'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref(null)
@@ -10,7 +10,11 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => !!user.value)
   const isAdmin = computed(() => hasRole(user.value, ROLES.ADMIN))
   const isScheduler = computed(() => hasRole(user.value, ROLES.SCHEDULER))
-  const homeRoute = computed(() => (isAdmin.value ? '/admin' : '/scheduler'))
+  const isRep = computed(() => hasRole(user.value, ROLES.REP))
+  const homeRoute = computed(() => (isAdmin.value ? '/admin' : isScheduler.value ? '/scheduler' : '/dashboards'))
+  const roleLabel = computed(() =>
+    isAdmin.value ? 'Admin' : isScheduler.value ? 'Scheduler' : isRep.value ? 'Tech rep' : 'Viewer',
+  )
 
   async function init() {
     if (ready.value) return
@@ -32,5 +36,9 @@ export const useAuthStore = defineStore('auth', () => {
     return hasRole(user.value, role)
   }
 
-  return { user, ready, isAuthenticated, isAdmin, isScheduler, homeRoute, init, login, logout, can }
+  function canAny(roles) {
+    return hasAnyRole(user.value, roles)
+  }
+
+  return { user, ready, isAuthenticated, isAdmin, isScheduler, isRep, homeRoute, roleLabel, init, login, logout, can, canAny }
 })

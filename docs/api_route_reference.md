@@ -64,9 +64,35 @@ All errors return a JSON body with a `detail` field.
 | GET | [`/assignments`](#get-assignments) | List assignments |
 | POST | [`/assignments`](#post-assignments) | Create a manual assignment |
 | GET | [`/assignments/{assignment_id}`](#get-assignmentsassignment_id) | Get one assignment |
-| PATCH | [`/assignments/{assignment_id}`](#patch-assignmentsassignment_id) | Change an assignment status |
+| PATCH | [`/assignments/{assignment_id}`](#patch-assignmentsassignment_id) | Change an assignment's status, rep, or times |
 | POST | [`/schedule/run`](#post-schedulerun) | Run the CBA-aware solver on stored data |
 | POST | [`/schedule/solve`](#post-schedulesolve) | Run the placeholder solver on inline data |
+| GET | [`/cba/sick-leave-allowance`](#sick-leave-allowance) | Sick days allowed from each month to year end |
+| PUT | [`/cba/sick-leave-allowance/{month}`](#sick-leave-allowance) | Set one month's allowance |
+| GET, POST | [`/training/types`](#training) | List or add training types |
+| GET, PATCH, DELETE | [`/training/types/{type_id}`](#training) | One training type |
+| GET, POST | [`/training/records`](#training) | List, record completed training, or submit dates |
+| GET, PATCH, DELETE | [`/training/records/{record_id}`](#training) | One training record |
+| POST | [`/training/records/{record_id}/approve`](#training) | Approve submitted dates |
+| POST | [`/training/records/{record_id}/reject`](#training) | Reject submitted dates |
+| GET | [`/training/due`](#training) | Reps due for training within N days |
+| GET | [`/leave-balances`](#leave-balances) | List vacation, stat, and sick balances |
+| PUT, DELETE | [`/leave-balances/{rep_id}/{year}/{leave_type}`](#leave-balances) | Set or remove a balance |
+| GET, POST | [`/vacation/bids`](#vacation) | List or add vacation bids |
+| GET, PATCH, DELETE | [`/vacation/bids/{bid_id}`](#vacation) | One bid |
+| POST | [`/vacation/bids/import`](#vacation) | Import bids from CSV |
+| POST | [`/vacation/award`](#vacation) | Award a year's bids by seniority |
+| GET | [`/vacation/capacity`](#vacation) | Reps off and places left per week |
+| GET, POST | [`/maintenance-events`](#maintenance-events) | List or add HMS and unplanned events |
+| POST | [`/maintenance-events/import`](#maintenance-events) | Import events from CSV |
+| GET, PATCH, DELETE | [`/maintenance-events/{event_id}`](#maintenance-events) | One event |
+| GET | [`/maintenance-events/{event_id}/staffing-options`](#maintenance-events) | Available reps and reassignments |
+| GET | [`/overtime/opportunities`](#overtime) | Unfilled demand with eligible reps by seniority |
+| GET, POST | [`/alerts`](#alerts) | Alert feed, filterable by location |
+| POST | [`/alerts/scan`](#alerts) | Raise coverage, shortage, and training alerts |
+| GET, PATCH, DELETE | [`/alerts/{alert_id}`](#alerts) | One alert; PATCH acknowledges |
+| GET | [`/dashboards/workforce`](#dashboards) | Available, assigned, and on-leave reps |
+| GET | [`/dashboards/coverage`](#dashboards) | Seats needed and filled per MRO per week |
 
 ---
 
@@ -105,7 +131,9 @@ Create a Tech Rep and, optionally, certifications without dates.
 | `email` | string | No | Unique, up to 254 characters |
 | `classification` | string | No | Up to 60 characters, for example `AME` |
 | `cba_group` | integer | No | 1 to 5 (Article 18). Group 1 at a major base uses the 26-week averaging period |
-| `union_seniority_date` | date | No | Used for mandatory assignment order |
+| `union_seniority_date` | date | No | Seniority tie-break after `seniority_rank` |
+| `seniority_rank` | integer | No | 1 is most senior. Separate from `id`: a rehired rep keeps their ID but gets a new rank. Orders overtime offers, mandatory overtime (reverse), and vacation awards |
+| `phone` | string | No | Contact number, 7 to 30 digits, spaces, `+`, `-`, `.`, or brackets |
 | `shift_pattern_code` | string | No | One of the codes from `/cba/shift-patterns` |
 | `shift_cycle_start` | date | No | Day 1 of the pattern's cycle. Needed to tell work days from days off |
 | `banked_ot_hours` | number | No | 0 to 80, default 0 |
@@ -238,6 +266,7 @@ Create an MRO location.
 | `location` | string | Yes | 1 to 200 characters, for example `Calgary` |
 | `airport_code` | string | No | Exactly 3 uppercase letters |
 | `timezone` | string | No | IANA name, default `UTC`. Used to split hours by local day |
+| `covering_base` | string | No | Home base whose team covers this MRO, for example `YYC`. The solver and overtime list prefer that team |
 
 ```json
 {"facility_name": "YYC Hangar 1", "location": "Calgary", "airport_code": "YYC", "timezone": "America/Edmonton"}
@@ -381,7 +410,7 @@ List time-off entries.
 
 ### POST /unavailability
 
-Record a period when a rep cannot be scheduled. Only `approved` entries block the solver.
+Record a period when a rep cannot be scheduled. Only `approved` entries block the solver; `requested` vacation can be granted by [`/schedule/run`](#post-schedulerun) within the weekly cap. Creating an entry or changing its status recounts `used_days` on the rep's vacation and sick [balances](#leave-balances) and runs the compliance check, which alerts on vacation and sick limits.
 
 **Body**
 
@@ -454,7 +483,8 @@ Create a demand. Each demand is one duty period; the solver rejects demands long
 | `aircraft_type_id` | integer | Yes | |
 | `start_time` | date-time | Yes | With offset |
 | `end_time` | date-time | Yes | With offset, after `start_time` |
-| `demand_type` | string | No | `base_coverage` (default, planned, 21-2) or `aog` (unplanned, 21-3) |
+| `demand_type` | string | No | `base_coverage` (default, planned, 21-2), `aog` (unplanned, 21-3), or a maintenance event type: `heavy_check`, `induction`, `rts`, `lease_return`, `hard_landing`, `hail_damage`, `mro_support` |
+| `maintenance_event_id` | integer | No | The maintenance event this demand staffs |
 | `reps_needed` | integer | No | 1 to 50, default 1 |
 | `priority` | integer | No | 1 (most urgent) to 5, default 3 |
 | `notes` | string | No | Up to 500 characters |
@@ -539,7 +569,7 @@ List assignments, ordered by start time.
 
 ### POST /assignments
 
-Create an assignment manually, to override the solver. CBA rules are **not** checked; only the no-overlap rule applies.
+Create an assignment manually, to override the solver. It is saved even when it breaks a CBA or company rule; the [compliance check](architecture.md#compliance-checks) runs on the rep around the new assignment, writes findings to alerts, and returns them as `warnings`. Only the no-overlap rule blocks the request.
 
 **Body**
 
@@ -567,7 +597,7 @@ Create an assignment manually, to override the solver. CBA rules are **not** che
 }
 ```
 
-**Response 201:** [Assignment](#assignment). **Errors:** 409 if the rep has an overlapping live assignment or an ID does not exist.
+**Response 201:** [Assignment](#assignment) plus `warnings`, an array of [ComplianceWarning](#compliancewarning). **Errors:** 409 if the rep has an overlapping live assignment or an ID does not exist.
 
 ### GET /assignments/{assignment_id}
 
@@ -577,7 +607,7 @@ Get one assignment.
 
 ### PATCH /assignments/{assignment_id}
 
-Change an assignment status. Allowed changes:
+Change an assignment's status, rep, or times. Send only the fields to change: `status`, `rep_id`, `start_time`, `end_time`. Rep and times can change while the assignment is live (not `completed` or `cancelled`). Allowed status changes:
 
 | From | To |
 | --- | --- |
@@ -592,7 +622,13 @@ Change an assignment status. Allowed changes:
 {"status": "confirmed"}
 ```
 
-**Response 200:** [Assignment](#assignment). **Errors:** 404; 409 for a change not in the table.
+```json
+{"rep_id": 7, "start_time": "2026-11-09T09:00:00-07:00"}
+```
+
+The compliance check runs on the new rep (and the old rep when it changed). Findings are returned, not blocking.
+
+**Response 200:** [Assignment](#assignment) plus `warnings`. **Errors:** 404; 409 for a status change not in the table, editing a final assignment, or an overlap; 422 if `end_time` is not after `start_time`.
 
 ---
 
@@ -607,7 +643,7 @@ Propose assignments for open demands in a time window, using stored reps, certif
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `start_time` | date-time | Yes | With offset |
-| `end_time` | date-time | Yes | With offset. Window at most 92 days |
+| `end_time` | date-time | Yes | With offset. Window at most 366 days, so a full year fits in one run |
 | `mro_id` | integer | No | Only schedule demands at this MRO |
 | `save` | boolean | No | Default `false`. When `true`, saves proposals as `proposed` assignments |
 | `allow_mandatory` | boolean | No | Default `false`. When `true`, may assign reps who did not accept a solicited demand |
@@ -629,7 +665,12 @@ Propose assignments for open demands in a time window, using stored reps, certif
 | `cba_rules_id` | integer | Rule set used |
 | `assignments` | [ProposedAssignment](#proposedassignment)[] | |
 | `unfilled` | [UnfilledDemand](#unfilleddemand)[] | Demands not fully staffed, with the reason |
-| `warnings` | string[] | Data gaps, such as a missing travel time |
+| `warnings` | string[] | Data gaps, such as a missing travel time, and weeks already over the vacation cap |
+| `vacation_granted` | integer[] | `requested` vacation entries granted within the weekly cap, most senior first. With `save`, they become `approved` |
+| `vacation_not_granted` | integer[] | Requested vacation that did not fit under the cap or overlaps existing work |
+| `violations` | [ComplianceWarning](#compliancewarning)[] | With `save`: compliance findings for each rep given work, also written to alerts |
+
+With `save`, the run window is also scanned for coverage gaps and shortages (see [`/alerts/scan`](#alerts)).
 
 ```json
 {
@@ -658,7 +699,7 @@ Propose assignments for open demands in a time window, using stored reps, certif
 }
 ```
 
-**Errors:** 422 if no CBA rules are in effect on `start_time` or the window is over 92 days; 409 if the schedule changed while saving (run again).
+**Errors:** 422 if no CBA rules are in effect on `start_time` or the window is over 366 days; 409 if the schedule changed while saving (run again).
 
 ### POST /schedule/solve
 
@@ -691,6 +732,90 @@ Placeholder solver that matches requests to certified reps from data in the body
 }
 ```
 
+## Sick leave allowance
+
+`GET /cba/sick-leave-allowance` lists, per month, the sick days a rep may take from the 1st of that month to year end (`month`, `max_days`, `needs_review`). January (12) and October (4) come from the requirements; the other months are a straight line between them and are flagged `needs_review`. `PUT /cba/sick-leave-allowance/{month}` with `{"max_days": 9}` sets a month and clears `needs_review`.
+
+## Training
+
+| Route | Notes |
+| --- | --- |
+| `GET /training/types`, `POST /training/types` | Body: `name`, `recurrence_months` (null for one-off), `is_mandatory` (default true), `aircraft_type_id` (endorsement courses: completing one adds that certification to the rep) |
+| `PATCH`, `DELETE /training/types/{type_id}` | 409 when records still use the type |
+| `GET /training/records` | Filters: `rep_id`, `training_type_id`, `status` (`submitted`, `approved`, `rejected`) |
+| `POST /training/records` | Body: `rep_id`, `training_type_id`, and either `completed_on` (history; stored as `approved`, `expires_on` defaults to `completed_on` plus the recurrence) or `scheduled_start` and `scheduled_end` (the training department submits dates; stored as `submitted`) |
+| `PATCH /training/records/{record_id}` | New scheduled dates on approved training cancel its leave and send it back to `submitted` |
+| `DELETE /training/records/{record_id}` | Also cancels its leave |
+| `POST /training/records/{record_id}/approve` | Creates an approved `training` leave row, cancels `proposed` assignments in the way, and returns `cancelled_assignment_ids` and compliance `warnings` for confirmed work that clashes |
+| `POST /training/records/{record_id}/reject` | Optional body `note` (up to 400 characters), appended to `notes` for the training department. Sets `rejected` and cancels any leave row |
+| `GET /training/due?days=60` | Active reps whose training expires within `days`, has expired, or (mandatory only) was never completed: `rep_id`, `rep_name`, `training_type_id`, `training_type_name`, `is_mandatory`, `expires_on`, `days_left`, `next_scheduled_start`, `location` (`Calgary`, or `Toronto` for eastern-based reps) |
+
+## Leave balances
+
+`GET /leave-balances` (filters `rep_id`, `year`, `leave_type`) returns `rep_id`, `year`, `leave_type` (`vacation`, `stat`, `sick`), `entitled_days`, `used_days`, and `remaining_days`. `PUT /leave-balances/{rep_id}/{year}/{leave_type}` with `{"entitled_days": 20, "used_days": 0}` sets a balance; `DELETE` removes it.
+
+`used_days` for `vacation` and `sick` is recounted from approved leave whenever leave changes. A day counts when it is a work day: a shift pattern work day, or Monday to Friday for reps without a pattern. `stat` usage is entered by hand.
+
+## Vacation
+
+| Route | Notes |
+| --- | --- |
+| `GET /vacation/bids` | Filters: `rep_id`, `year`, `status` (`submitted`, `awarded`, `denied`, `withdrawn`) |
+| `POST /vacation/bids` | Body: `rep_id`, `year`, `week_start` (a Monday), `preference_rank` (1 is first choice). 409 for a repeated week or rank |
+| `PATCH /vacation/bids/{bid_id}` | `preference_rank` or `status`. Moving an awarded bid to another status cancels its leave |
+| `DELETE /vacation/bids/{bid_id}` | Cancels the leave of an awarded bid |
+| `POST /vacation/bids/import` | `text/csv` body with `rep_id` or `email`, `week_start`, `preference_rank`, and optional `year` (defaults to the ISO year of `week_start`). All rows or none: any bad row returns 422 with one entry per line |
+| `POST /vacation/award` | Body `{"year": 2027}`. Takes reps in seniority order and each rep's bids by preference. A week is awarded while it is under `max_reps_off_per_week` and the rep has enough vacation balance (a rep with no balance on file is denied). Awards become approved vacation leave for Monday to Monday in the rep's home timezone. Returns `awarded` bid IDs and `denied` with a reason each |
+| `GET /vacation/capacity?year=2027` | Every week starting in the year: `week_start`, `cap`, `reps_off`, `remaining`, `rep_ids` |
+
+```csv
+email,week_start,preference_rank
+ana.lopez@example.com,2027-07-05,1
+ana.lopez@example.com,2027-08-02,2
+```
+
+## Maintenance events
+
+Heavy Maintenance Schedule and unplanned events are entered by hand or by CSV. There is no external HMS integration.
+
+| Route | Notes |
+| --- | --- |
+| `GET /maintenance-events` | Filters: `mro_id`, `aircraft_type_id`, `event_type`, `status`, and `start`, `end` dates (overlapping) |
+| `POST /maintenance-events` | Body: `aircraft_type_id`, `mro_id`, `tail_number`, `event_type` (`heavy_check`, `induction`, `rts`, `aog`, `lease_return`, `hard_landing`, `hail_damage`, `mro_support`), `induction_date`, `rts_date`, optional `reps_required` and `notes`. Returns the event with `demand_ids` |
+| `POST /maintenance-events/import` | `text/csv` body with `tail_number`, `event_type`, `induction_date`, `rts_date`, `aircraft_type` (model name) or `aircraft_type_id`, `mro` (airport code or facility name) or `mro_id`, and optional `reps_required`, `notes`. All rows or none |
+| `PATCH /maintenance-events/{event_id}` | `tail_number`, `induction_date`, `rts_date`, `reps_required`, `status`, `notes` |
+| `DELETE /maintenance-events/{event_id}` | Cancels the event's demands first |
+| `GET /maintenance-events/{event_id}/staffing-options` | Per open shift: the [OvertimeOpportunity](#overtime) fields plus `reassignments`, reps on lower-priority proposed or confirmed work at the same time who would be free if moved |
+
+**Generated demand.** Creating or importing an event adds one demand per support day: a day shift from 07:00 for 10 h local time, from `induction_date` to `rts_date` inclusive (`induction` and `rts` events get one day). `reps_needed` is `reps_required`, which defaults to 2 for `heavy_check` and 1 otherwise. Priority: `aog` 1; `hard_landing`, `hail_damage`, `rts` 2; `induction`, `heavy_check`, `lease_return` 3; `mro_support` 4.
+
+**Date changes.** When the dates, staffing, or status change, the event's demands follow: days no longer covered are cancelled and their live assignments get a `date_conflict` alert, new days get new demands and one `date_conflict` alert for the MRO, and open demands take the new `reps_required`. Cancelling the event cancels all its demands.
+
+## Overtime
+
+`GET /overtime/opportunities?start=...&end=...&mro_id=` lists open demands in the window that are still short of reps. Each has `demand_id`, `mro_id`, `aircraft_type_id`, `demand_type`, `start_time`, `end_time`, `priority`, `reps_needed`, `still_needed`, and:
+
+- `eligible`: reps with a valid certification, no approved leave or training, and minimum rest (field service rest when away from base) around existing work. Most senior first, which is the order to offer voluntary overtime; mandatory overtime goes from the end. Each has `rep_id`, `name`, `seniority_rank`, `response` to a solicitation, `field_service`, `home_team` (based at the MRO's `covering_base`; listed first), and `pattern_day_off` (true when the shift falls on a pattern day off).
+- `ineligible`: the other reps with a `reason`.
+
+## Alerts
+
+| Route | Notes |
+| --- | --- |
+| `GET /alerts` | Newest first. Filters: `mro_id` (location), `rep_id`, `demand_id`, `alert_type`, `severity` (`info`, `warning`, `critical`), `acknowledged`, `limit` (default 200) |
+| `POST /alerts` | Add an alert by hand |
+| `PATCH /alerts/{alert_id}` | `{"acknowledged": true}` |
+| `POST /alerts/scan` | Query `start`, `end` (default now to 90 days ahead) and `training_days` (default 60). Raises `coverage_gap` (critical within 7 days), `no_qualified_rep`, `shortage` (more reps needed on a day at an MRO than qualified reps not on leave, worst day per week), `training_due`, `schedule_horizon` (a `7-7` rep has shift days in the next `schedule_publish_days` with no assignment, leave, or training), and `vacation_unused` (vacation and stat days for the year not all in the schedule; next year is checked from December 1). Acknowledges earlier alerts of these types that no longer apply. Returns `created` and `resolved` |
+
+Alert types: `coverage_gap`, `no_qualified_rep`, `shortage`, `date_conflict`, `training_due`, `training_expired`, `training_conflict`, `vacation_limit`, `sick_limit`, `rest`, `shift_pattern`, `qualification`, `seniority`, `no_aircraft`, `schedule_horizon`, `vacation_unused`. Compliance types come from the [compliance check](architecture.md#compliance-checks); `date_conflict` comes from maintenance event changes.
+
+## Dashboards
+
+- `GET /dashboards/workforce?start=...&end=...&mro_id=`: `available`, `assigned`, and `on_leave` counts, and `reps` with `status`, `mro_ids`, `leave_reasons`, and `assigned_hours`. With `mro_id`, only reps based at or assigned to that MRO.
+- `GET /dashboards/coverage?start=...&end=...&mro_id=`: per MRO and week, `shifts`, `seats_needed`, `seats_filled`, and `gap`.
+
+Both accept windows up to 366 days.
+
 ---
 
 ## Response schemas
@@ -710,11 +835,13 @@ Placeholder solver that matches requests to certified reps from data in the body
   "shift_pattern_code": "5-5-4",
   "shift_cycle_start": "2026-11-02",
   "banked_ot_hours": 0.0,
+  "seniority_rank": 12,
+  "phone": "(403) 555-0142",
   "certified_aircraft_type_ids": [1, 2]
 }
 ```
 
-`email`, `classification`, `cba_group`, `union_seniority_date`, `shift_pattern_code`, and `shift_cycle_start` can be `null`.
+`email`, `classification`, `cba_group`, `union_seniority_date`, `shift_pattern_code`, `shift_cycle_start`, `seniority_rank`, and `phone` can be `null`.
 
 ### Certification
 
@@ -771,6 +898,10 @@ Both dates can be `null`.
 | `ot_rate_mandatory` | number | 16-1.06, 21-2.12 | (2.0) |
 | `max_banked_ot_hours` | number | 15-4.02 | (80) |
 | `stat_holiday_rate` | number | 29-3.08 | (1.5) |
+| `min_days_off_between_rotations` | integer | | Full days off between two runs of worked days (2) |
+| `max_reps_off_per_week` | integer | | Company-wide cap on reps on approved vacation in one week (3) |
+| `continuity_lookback_days` | integer | | Days of history the solver uses to keep reps at the same MRO (90) |
+| `schedule_publish_days` | integer | | Days ahead each rep's schedule must be plotted (30) |
 
 Values in brackets are the 2024-2029 agreement defaults.
 
@@ -888,3 +1019,13 @@ Values in brackets are the 2024-2029 agreement defaults.
 | `demand_id` | integer | |
 | `still_needed` | integer | Reps still required |
 | `reason` | string | Why the solver could not fill it, for example `No eligible rep: 3 did not accept; set allow_mandatory to assign in reverse seniority` |
+
+### ComplianceWarning
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `alert_type` | string | `rest`, `shift_pattern`, `training_conflict`, `training_expired`, `vacation_limit`, `sick_limit`, `qualification`, `seniority`, or `no_aircraft` |
+| `severity` | string | `info`, `warning`, or `critical` |
+| `message` | string | For example `Ana Lopez: 6.0 h rest before assignment 41 on 2026-11-03, under the 10 h minimum` |
+| `rep_id` | integer | |
+| `mro_id`, `demand_id`, `assignment_id` | integer or null | Set when the finding is about one assignment |

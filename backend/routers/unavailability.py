@@ -13,8 +13,16 @@ from schemas import (
     UnavailabilityStatus,
     UnavailabilityStatusUpdate,
 )
+from services import compliance, leave
 
 router = APIRouter(prefix="/unavailability", tags=["unavailability"])
+
+
+def leave_changed(db: DbSession, entry: RepUnavailability) -> None:
+    """Recount leave balances and recheck limits after leave is added or changes status."""
+    years = range(entry.start_time.year, entry.end_time.year + 1)
+    leave.recount(db, entry.rep_id, years)
+    compliance.record(db, entry.rep_id, entry.start_time, entry.end_time)
 
 
 @router.get("", response_model=list[UnavailabilityRead])
@@ -56,6 +64,7 @@ def create_unavailability(payload: UnavailabilityCreate, db: DbSession) -> RepUn
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Unknown tech rep ID") from None
     db.refresh(entry)
+    leave_changed(db, entry)
     return entry
 
 
@@ -66,4 +75,5 @@ def update_unavailability_status(
     entry = get_unavailability(entry_id, db)
     entry.status = payload.status
     db.commit()
+    leave_changed(db, entry)
     return entry

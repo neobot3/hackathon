@@ -51,6 +51,13 @@ const GROUPS = [
       ['stat_holiday_rate', 'Stat holiday rate', 'n', '×'],
     ],
   },
+  {
+    title: 'Scheduling',
+    fields: [
+      ['schedule_publish_days', 'Schedule plotted ahead', 'i', 'days'],
+      ['max_reps_off_per_week', 'Max reps on vacation per week', 'i'],
+    ],
+  },
 ]
 
 const { data: rules, reload } = useResource(() => api.cba.rules())

@@ -19,6 +19,12 @@ const TONES = {
   declined: 'danger',
   cancelled: 'muted',
   base_coverage: 'muted',
+  available: 'success',
+  assigned: 'info',
+  on_leave: 'warning',
+  critical: 'danger',
+  warning: 'warning',
+  info: 'info',
   true: 'success',
   false: 'muted',
 }

@@ -9,9 +9,12 @@ export function userFromClaims(claims) {
   const tokenRoles = claims.roles || []
   if (tokenRoles.includes(config.azure.adminRole)) roles.push(ROLES.ADMIN)
   if (tokenRoles.includes(config.azure.schedulerRole)) roles.push(ROLES.SCHEDULER)
+  if (tokenRoles.includes(config.azure.repRole)) roles.push(ROLES.REP)
+  if (tokenRoles.includes(config.azure.viewerRole)) roles.push(ROLES.VIEWER)
   return {
     username: claims.preferred_username || claims.email || claims.oid,
     name: claims.name || claims.preferred_username,
+    email: claims.email || claims.preferred_username || null,
     roles,
   }
 }

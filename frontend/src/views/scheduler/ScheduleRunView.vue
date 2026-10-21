@@ -108,7 +108,7 @@ async function confirmAll() {
         </div>
       </form>
       <p v-if="run.error.value" class="form-error" style="margin: 0 1.25rem 1.25rem">{{ run.error.value }}</p>
-      <p class="muted run__hint">Windows are limited to 92 days. Preview does not change any data.</p>
+      <p class="muted run__hint">Windows are limited to 366 days, so a full year fits in one run. Preview does not change any data.</p>
     </div>
 
     <div v-if="result" ref="results" class="stack" style="margin-top: 1.5rem">
@@ -155,7 +155,11 @@ async function confirmAll() {
             </button>
           </div>
         </div>
-        <div v-if="view === 'timeline'">
+        <div v-if="!result.assignments.length && !result.unfilled.length" class="empty">
+          No open demand in this window, so there is nothing to schedule. Demand comes from maintenance
+          events and the Demands page; pick a window that covers them.
+        </div>
+        <div v-else-if="view === 'timeline'">
           <div class="legend">
             <span><i class="lg lg--info" /> Base coverage</span>
             <span><i class="lg lg--success" /> Field service</span>

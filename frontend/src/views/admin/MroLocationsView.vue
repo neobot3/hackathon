@@ -18,7 +18,7 @@ const homeBases = computed(() => [...new Set(reference.reps.map((r) => r.home_ba
 // ---------- Create / edit ----------
 const editing = ref(null)
 const showForm = ref(false)
-const form = reactive({ facility_name: '', location: '', airport_code: '', timezone: 'UTC' })
+const form = reactive({ facility_name: '', location: '', airport_code: '', timezone: 'UTC', covering_base: '' })
 
 function open(mro = null) {
   editing.value = mro
@@ -27,6 +27,7 @@ function open(mro = null) {
     location: mro?.location ?? '',
     airport_code: mro?.airport_code ?? '',
     timezone: mro?.timezone ?? 'America/Edmonton',
+    covering_base: mro?.covering_base ?? '',
   })
   save.error.value = ''
   showForm.value = true
@@ -38,6 +39,7 @@ async function submit() {
     location: form.location.trim(),
     airport_code: form.airport_code.trim().toUpperCase() || null,
     timezone: form.timezone,
+    covering_base: form.covering_base.trim() || null,
   }
   const ok = editing.value
     ? await save.run(() => api.mroLocations.update(editing.value.id, diff(editing.value, body)), 'MRO location updated')
@@ -103,7 +105,7 @@ async function removeTravel(t) {
     <div class="card table-wrap">
       <table class="table">
         <thead>
-          <tr><th>Facility</th><th>Code</th><th>Location</th><th>Timezone</th><th /></tr>
+          <tr><th>Facility</th><th>Code</th><th>Location</th><th>Timezone</th><th>Covered by</th><th /></tr>
         </thead>
         <tbody>
           <tr v-for="m in reference.mros" :key="m.id">
@@ -111,6 +113,7 @@ async function removeTravel(t) {
             <td><span v-if="m.airport_code" class="badge badge--info mono">{{ m.airport_code }}</span><span v-else class="muted">—</span></td>
             <td>{{ m.location }}</td>
             <td class="mono">{{ m.timezone }}</td>
+            <td>{{ m.covering_base || '—' }}</td>
             <td class="actions">
               <button class="btn btn--ghost btn--sm" @click="open(m)">Edit</button>
               <button class="btn btn--ghost btn--sm" @click="openTravel(m)">Travel times</button>
@@ -133,6 +136,10 @@ async function removeTravel(t) {
           <span>Timezone *</span>
           <input v-model="form.timezone" list="tz-list" required maxlength="64" />
           <datalist id="tz-list"><option v-for="tz in timezones" :key="tz" :value="tz" /></datalist>
+        </label>
+        <label class="field span-all">
+          <span>Covering team (home base)</span>
+          <input v-model="form.covering_base" maxlength="200" placeholder="YYC" />
         </label>
         <p v-if="save.error.value" class="form-error span-all">{{ save.error.value }}</p>
       </form>

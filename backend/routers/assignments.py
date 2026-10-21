@@ -11,8 +11,10 @@ from schemas import (
     AssignmentCreate,
     AssignmentRead,
     AssignmentStatus,
-    AssignmentStatusUpdate,
+    AssignmentUpdate,
+    AssignmentWithWarnings,
 )
+from services import compliance
 
 router = APIRouter(prefix="/assignments", tags=["assignments"])
 
@@ -61,9 +63,10 @@ def get_assignment(assignment_id: int, db: DbSession) -> Assignment:
     return assignment
 
 
-@router.post("", response_model=AssignmentRead, status_code=status.HTTP_201_CREATED)
-def create_assignment(payload: AssignmentCreate, db: DbSession) -> Assignment:
-    """Manual assignment, for overriding the solver. CBA rules are not checked here."""
+@router.post("", response_model=AssignmentWithWarnings, status_code=status.HTTP_201_CREATED)
+def create_assignment(payload: AssignmentCreate, db: DbSession) -> AssignmentWithWarnings:
+    """Manual assignment, for overriding the solver. Saved even when it breaks a rule;
+    compliance findings come back as warnings and are written to alerts."""
     assignment = Assignment(**payload.model_dump())
     db.add(assignment)
     try:
@@ -75,19 +78,54 @@ def create_assignment(payload: AssignmentCreate, db: DbSession) -> Assignment:
             detail="Rep already has an overlapping assignment, or an ID does not exist",
         ) from None
     db.refresh(assignment)
-    return assignment
+    warnings = compliance.record(db, assignment.rep_id, assignment.start_time, assignment.end_time)
+    return AssignmentWithWarnings.model_validate(assignment).model_copy(
+        update={"warnings": warnings}
+    )
 
 
-@router.patch("/{assignment_id}", response_model=AssignmentRead)
-def update_assignment_status(
-    assignment_id: int, payload: AssignmentStatusUpdate, db: DbSession
-) -> Assignment:
+@router.patch("/{assignment_id}", response_model=AssignmentWithWarnings)
+def update_assignment(
+    assignment_id: int, payload: AssignmentUpdate, db: DbSession
+) -> AssignmentWithWarnings:
+    """Change status, rep, or times. Rep and times are fixed once completed or cancelled."""
     assignment = get_assignment(assignment_id, db)
-    if payload.status != assignment.status and payload.status not in TRANSITIONS[assignment.status]:
+    changes = payload.model_dump(exclude_unset=True)
+    new_status = changes.pop("status", assignment.status)
+    if new_status != assignment.status and new_status not in TRANSITIONS[assignment.status]:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            detail=f"Cannot change status from {assignment.status} to {payload.status}",
+            detail=f"Cannot change status from {assignment.status} to {new_status}",
         )
-    assignment.status = payload.status
-    db.commit()
-    return assignment
+    if changes and not TRANSITIONS[assignment.status]:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail=f"Cannot edit a {assignment.status} assignment"
+        )
+    old_rep, old_start, old_end = assignment.rep_id, assignment.start_time, assignment.end_time
+    for field, value in changes.items():
+        setattr(assignment, field, value)
+    assignment.status = new_status
+    if assignment.end_time <= assignment.start_time:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="end_time must be after start_time"
+        )
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Rep already has an overlapping assignment, or the rep ID does not exist",
+        ) from None
+    warnings = compliance.record(
+        db,
+        assignment.rep_id,
+        min(old_start, assignment.start_time),
+        max(old_end, assignment.end_time),
+    )
+    if old_rep != assignment.rep_id:
+        compliance.record(db, old_rep, old_start, old_end)
+    return AssignmentWithWarnings.model_validate(assignment).model_copy(
+        update={"warnings": warnings}
+    )

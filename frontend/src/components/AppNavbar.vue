@@ -21,7 +21,7 @@ const initials = computed(() =>
     .slice(0, 2)
     .toUpperCase(),
 )
-const roleLabel = computed(() => (auth.isAdmin ? 'Admin' : 'Scheduler'))
+const roleLabel = computed(() => auth.roleLabel)
 
 function onScroll() {
   scrolled.value = window.scrollY > 24
@@ -58,6 +58,7 @@ onBeforeUnmount(() => window.removeEventListener('scroll', onScroll))
           <span class="nav__divider" />
           <RouterLink v-if="auth.isAdmin" to="/admin" class="nav__area">Admin</RouterLink>
           <RouterLink v-if="auth.isScheduler" to="/scheduler" class="nav__area">Scheduler</RouterLink>
+          <RouterLink to="/dashboards" class="nav__area">Dashboards</RouterLink>
           <div class="nav__user">
             <span class="nav__avatar">{{ initials }}</span>
             <span class="nav__who">

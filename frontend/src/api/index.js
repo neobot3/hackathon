@@ -1,4 +1,4 @@
-import { del, get, patch, post, put } from './client'
+import { del, get, patch, post, put, request } from './client'
 
 const seg = encodeURIComponent
 
@@ -65,5 +65,36 @@ export const api = {
 
   schedule: {
     run: (body) => post('/schedule/run', body),
+  },
+
+  alerts: {
+    list: (params) => get('/alerts', params),
+    acknowledge: (id, acknowledged = true) => patch(`/alerts/${id}`, { acknowledged }),
+    scan: (params) => request('POST', '/alerts/scan', { params }),
+  },
+
+  dashboards: {
+    workforce: (params) => get('/dashboards/workforce', params),
+    coverage: (params) => get('/dashboards/coverage', params),
+  },
+
+  training: {
+    types: () => get('/training/types'),
+    records: (params) => get('/training/records', params),
+    due: (days) => get('/training/due', { days }),
+    approve: (id) => post(`/training/records/${id}/approve`),
+    reject: (id, note) => post(`/training/records/${id}/reject`, { note: note || null }),
+  },
+
+  leaveBalances: {
+    list: (params) => get('/leave-balances', params),
+  },
+
+  vacation: {
+    capacity: (year) => get('/vacation/capacity', { year }),
+  },
+
+  maintenanceEvents: {
+    list: (params) => get('/maintenance-events', params),
   },
 }

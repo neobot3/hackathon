@@ -30,7 +30,9 @@ const homeBases = computed(() => [...new Set(reference.reps.map((r) => r.home_ba
 const EMPTY = {
   name: '',
   email: '',
+  phone: '',
   home_base: '',
+  seniority_rank: '',
   classification: '',
   cba_group: '',
   union_seniority_date: '',
@@ -64,8 +66,13 @@ function toggleType(id) {
 }
 
 function payload() {
-  const body = { ...form, cba_group: form.cba_group === '' ? null : Number(form.cba_group), banked_ot_hours: Number(form.banked_ot_hours) }
-  for (const k of ['email', 'classification', 'union_seniority_date', 'shift_pattern_code', 'shift_cycle_start']) {
+  const body = {
+    ...form,
+    cba_group: form.cba_group === '' ? null : Number(form.cba_group),
+    seniority_rank: form.seniority_rank === '' ? null : Number(form.seniority_rank),
+    banked_ot_hours: Number(form.banked_ot_hours),
+  }
+  for (const k of ['email', 'phone', 'classification', 'union_seniority_date', 'shift_pattern_code', 'shift_cycle_start']) {
     if (body[k] === '') body[k] = null
   }
   return body
@@ -223,6 +230,11 @@ const isExpired = (c) => c.expires_on && new Date(c.expires_on) < new Date()
       <form id="rep-form" class="grid grid-3" @submit.prevent="submit">
         <label class="field span-2"><span>Full name *</span><input v-model="form.name" required maxlength="200" /></label>
         <label class="field"><span>Email</span><input v-model="form.email" type="email" maxlength="254" /></label>
+        <label class="field"><span>Phone</span><input v-model="form.phone" type="tel" maxlength="30" pattern="[0-9+() .\-]{7,30}" placeholder="(437) 995-6452" /></label>
+        <label class="field">
+          <span>Seniority rank</span>
+          <input v-model="form.seniority_rank" type="number" min="1" step="1" title="Optional. Leave blank to rank by employee ID (lower is more senior). Set to override, e.g. for a rehire." />
+        </label>
         <label class="field">
           <span>Home base *</span>
           <input v-model="form.home_base" list="home-bases" required maxlength="200" />
